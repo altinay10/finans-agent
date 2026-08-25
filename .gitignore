@@ -1,0 +1,18 @@
+# Sanal ortam ve derleme artıkları
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# SIRLAR — .env LLM/EVDS anahtarı taşır, ASLA depoya girmemeli.
+.env
+
+# Veri: veritabanı, ham snapshot'lar ve log'lar. Hepsi yeniden üretilebilir
+# (worker.py) ve depoya girerse hem şişirir hem de her koşuda gürültülü
+# diff üretir. Yedek almak için README'deki volume tar komutunu kullan.
+data/
+
+.streamlit/
+.DS_Store

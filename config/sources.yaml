@@ -1,0 +1,567 @@
+# Kaynak envanteri — banka uç noktaları, selector'lar, fon listesi.
+#
+# UYARI: Aşağıdaki banka uç noktaları dokümante edilmemiş iç servislerdir.
+# Haber vermeden değişebilir. Kullanmadan önce elle doğrula (bkz. §02).
+# Bir topluluk deposundan derlendi, son kontrol tarihi burada tutulur.
+
+institutions:
+  - {code: TCMB,         name: "T.C. Merkez Bankası",    kind: reference}
+  - {code: GARANTIBBVA,  name: "Garanti BBVA",           kind: bank}
+  - {code: ISBANK,       name: "Türkiye İş Bankası",     kind: bank}
+  - {code: AKBANK,       name: "Akbank",                 kind: bank}
+  - {code: HALKBANK,     name: "Halkbank",               kind: bank}
+  - {code: TEB,          name: "CepteTEB",               kind: bank}
+  - {code: KUVEYTTURK,   name: "Kuveyt Türk",            kind: participation}
+  - {code: ZIRAAT,       name: "Ziraat Bankası",         kind: bank}
+  - {code: YAPIKREDI,    name: "Yapı Kredi",             kind: bank}
+  - {code: ENPARA,       name: "Enpara (QNB)",           kind: bank}
+  - {code: EMLAKKATILIM, name: "Emlak Katılım",          kind: participation}
+  - {code: VAKIFBANK,    name: "VakıfBank",              kind: bank}
+
+fx_endpoints:
+  # last_verified alanı elle doğrulama tarihidir — 6 aydan eskiyse şüpheyle yaklaş.
+  # status: active     -> collectors/fx_banks.py bunu gerçekten çeker
+  # status: blocked     -> elle doğrulandı, çekilmiyor; sebep blocked_reason'da
+  # status: unverified  -> henüz test edilmedi
+  #
+  # robots_override: true -> robots.txt bu yolu yasaklıyor ama kullanıcı
+  #   kararıyla (2026-08-24) yine de çekiliyor. Kişisel kullanım, günde birkaç
+  #   istek, herkese açık ve kimlik doğrulaması olmayan veri. Karar geri
+  #   alınırsa bu alanı taşıyan kaynakları kapatmak yeterli.
+
+  tcmb:
+    url: "https://www.tcmb.gov.tr/kurlar/today.xml"
+    archive_url: "https://www.tcmb.gov.tr/kurlar/{yyyymm}/{ddmmyyyy}.xml"
+    type: xml
+    auth: none
+    status: active
+    last_verified: 2026-08-23
+    note: "collectors/fx_tcmb.py — canlı test edildi, çalışıyor"
+
+  garantibbva:
+    url: "https://customers.garantibbva.com.tr/digital-public/currency-convertor-public/v2/currency-convertor/currency-list-detail"
+    type: json_get
+    auth: none
+    status: blocked
+    last_verified: 2026-08-23
+    blocked_reason: >
+      Uç nokta doğru (widget config.json'dan doğrulandı: webforms.garantibbva.com.tr
+      üzerindeki 'Currency Convertor React App' bu URL'i kullanıyor ve canlı sayfada
+      gerçek kur gösteriyor). Ama doğrudan HTTP isteği — tam tarayıcı başlıklarıyla
+      (Origin, Referer, Sec-Fetch-*, HTTP/2) denendiğinde bile — hep HTTP 500
+      (nginx) dönüyor; CAPTCHA/engel sayfası değil, muhtemelen bir cihaz/oturum
+      çerezi gerektiriyor. Daha fazla başlık/parmak izi denemesi bypass sayılacağı
+      için durduruldu. Alternatif: gerçek bir headless tarayıcıyla (Playwright)
+      widget'ı render edip DOM'dan okumak — bkz. tasarım §08 "tarayıcı gerekirse".
+
+  isbank:
+    url: "https://www.isbank.com.tr/_vti_bin/DV.Isbank/PriceAndRate/PriceAndRateService.svc/GetFxRates"
+    type: json_get
+    auth: none
+    headers: {Referer: "https://www.isbank.com.tr/"}
+    status: blocked
+    last_verified: 2026-08-23
+    blocked_reason: >
+      WAF. Normal tarayıcı navigasyonuyla bile www.isbank.com.tr'nin herhangi
+      bir sayfasına gidildiğinde "İstek Engellenmiştir" blok sayfası dönüyor
+      (bir çağrı merkezi ID'siyle). Bu robots.txt gibi bir nezaket kuralı
+      DEĞİL, aktif bot tespiti; aşmak parmak izi taklidi gerektirir ve
+      bot-tespiti atlatma kapsamına girer. Kullanıcının robots kararı bunu
+      kapsamıyor. Resmi geliştirici portalı değerlendirilebilir.
+
+  akbank:
+    url: "https://www.akbank.com/_layouts/15/Akbank/CalcTools/Ajax.aspx/GetDovizKurlari"
+    type: json_post
+    auth: none
+    payload: {kurTuru: "8"}
+    headers: {Referer: "https://www.akbank.com/hesaplama-araclari"}
+    status: active
+    robots_override: true
+    last_verified: 2026-08-24
+    note: >
+      Sayfanın kendi exchangeRateCalculator.get() çağrısı. DovizAlis/DovizSatis
+      = döviz hesabı kuru (EfektifAlis/Satis nakit kurudur, kullanılmıyor).
+      KurGuncellemeZamani gerçek kotasyon saati (İstanbul yereli) — quoted_at
+      tahmini DEĞİL. robots.txt /_layouts* yasağı kullanıcı kararıyla
+      uygulanmıyor.
+
+  halkbank:
+    url: "https://webapi.halkbank.com.tr/api/MarketInformation/"
+    type: json_get
+    auth: none
+    status: unverified
+    last_verified: 2026-08-23
+    note: "TLS handshake tamamlanmadı (curl'den) — coğrafi/IP kısıtlaması olabilir, tekrar denenmeli"
+
+  teb:
+    url: "https://www.cepteteb.com.tr/services/GetGunlukDovizKur"
+    type: json_get
+    auth: none
+    headers: {Referer: "https://www.cepteteb.com.tr/"}
+    status: active
+    last_verified: 2026-08-23
+    note: "collectors/fx_banks.py CepteTebParser — canlı test edildi, çalışıyor"
+
+  kuveytturk:
+    url: "https://www.kuveytturk.com.tr/finans-portali/"
+    type: two_step_token
+    auth: none
+    status: unverified
+    last_verified: null
+    note: "Önce sayfadan token çek, sonra JSON iste — henüz canlı test edilmedi"
+
+  ziraat:
+    url: "https://www.ziraatbank.com.tr/tr/_layouts/15/Ziraat/HomePage/Ajax.aspx/GetZiraatVerileri"
+    type: json_wrapped_html
+    auth: none
+    status: active
+    robots_override: true
+    last_verified: 2026-08-24
+    note: >
+      Ana sayfadaki "Ziraat Verileri" widget'ının uç noktası. Yanıt JSON ama
+      içeriği HTML parçası: her para birimi bir <li>, içinde "BANKA ALIŞ" /
+      "BANKA SATIŞ" span'ları. Sayfa kendi kotasyon saatini vermiyor ->
+      quoted_at_is_estimated=true. robots.txt /_layouts* yasağı kullanıcı
+      kararıyla uygulanmıyor.
+
+  yapikredi:
+    url: "https://www.yapikredi.com.tr/_ajaxproxy/general.aspx/LoadMainCurrencies"
+    type: json_post
+    auth: none
+    headers: {Referer: "https://www.yapikredi.com.tr/bireysel-bankacilik/hesaplama-araclari/doviz-hesaplama"}
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      Sayfanın kendi $.Page.LoadMainCurrencies() çağrısı — parametresiz,
+      çerezsiz, token'sız. robots.txt 'Allow: /' ve ClaudeBot'u açıkça
+      izinli sayıyor. Kendi lastUpdate saatini verdiği için quoted_at
+      TAHMİNİ DEĞİL; ama saat İstanbul yerelidir, UTC'ye çevriliyor.
+      Bunlar gişe/nakit kuru: makas geniş (USD 46,58/49,23) — TCMB
+      referansıyla kıyaslarken beklenen bir farktır.
+      collectors/fx_banks.py YapiKrediParser.
+
+  enpara:
+    url: "https://www.enpara.com/hesaplar/doviz-ve-altin-kurlari"
+    type: html
+    auth: none
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      Domain qnbfinansbank.enpara.com'dan enpara.com'a taşınmış — yeni URL
+      bulundu ve doğrulandı. Sunucu tarafında render edilmiş düz HTML tablo,
+      robots.txt açıkça izin veriyor (hatta ClaudeBot'u ai-input=yes ile
+      isimlendiriyor). collectors/fx_banks.py EnparaParser — çalışıyor.
+
+  emlakkatilim:
+    url: "https://www.emlakkatilim.com.tr/tr/tum-kurlarimiz"
+    type: html
+    auth: none
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      Sunucu tarafında render edilmiş düz HTML tablo, robots.txt "Allow: /".
+      collectors/fx_banks.py EmlakKatilimParser — çalışıyor. Kar payı (mevduat)
+      oranları AYRI bir konu — bkz. collectors/deposit_rates.py notu: o sayfadaki
+      sayılar doğrudan yıllık oran değil, dağıtım/paylaşım ORANI.
+
+  vakifbank:
+    url: "https://inbound.apigateway.vakifbank.com.tr:8443/marketPrices"
+    type: two_step_token
+    auth: oob_token
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      www.vakifbank.com.tr'nin kendi ön yüzünün kullandığı, herkese açık
+      (login'siz) API akışı — endpoints.js + modules.min.js okunarak bulundu.
+      Önce POST /plugins/getTokenCreditCard (scope header ile) anonim bir
+      bearer token veriyor, sonra bu token'la apigateway'deki /marketPrices
+      (ve /calculator/depositProductList, /timeDepositRates, /loanProductList)
+      çağrılabiliyor. CAPTCHA yok, giriş yok. Detay: collectors/vakifbank_common.py.
+      collectors/fx_banks.py VakifBankParser — çalışıyor.
+
+# ---------------------------------------------------------------------------
+# Mevduat / katılma hesabı oranları — collectors/deposit_rates.py
+#
+# Hiçbiri koda gömülü sabit değil; hepsi her gün yeniden çekiliyor.
+# Bir kaynak düşerse diğerlerinin verisi yazılmaya devam eder.
+# ---------------------------------------------------------------------------
+deposit_endpoints:
+  vakifbank:
+    url: "https://inbound.apigateway.vakifbank.com.tr:8443/calculator/depositProductList"
+    rates_url: "https://inbound.apigateway.vakifbank.com.tr:8443/timeDepositRates"
+    type: two_step_token
+    auth: oob_token
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      Ürün listesi + ürün x para birimi başına oran çağrısı. Gerçek TUTAR x VADE
+      matrisi, 6-750 gün arası onlarca vade. Token akışı vakifbank_common.py'de.
+
+  akbank:
+    url: "https://www.akbank.com/_layouts/15/Akbank/CalcTools/Ajax.aspx/GetMevduatFaiz"
+    type: json_post
+    auth: none
+    payload: {dovizKodu: "888", faizTipi: "97", faizTuru: "0", kanalKodu: "8"}
+    headers: {Referer: "https://www.akbank.com/mevduat-yatirim/mevduat/vadeli-mevduat-faiz-hesaplama"}
+    status: active
+    robots_override: true
+    last_verified: 2026-08-24
+    note: >
+      Tam TUTAR x VADE matrisi (Headers x GrossRates çaprazı; GRates[i]
+      Headers[i] kademesine aittir). Yalnızca TL: ürün seçicisinde tek para
+      birimi var (888), 840/978 denemeleri boş dönüyor. Oran "-" ise o
+      kademede o vade açık değildir, atlanır.
+
+  teb:
+    url: "https://www.cepteteb.com.tr/Services/VadeliHesapFaizOranList"
+    type: json_post_form
+    auth: none
+    payload: {paraKod: "TL|USD|EUR", ceptetebEH: "E"}
+    headers: {Referer: "https://www.cepteteb.com.tr/hesaplama/mevduat-faizi-hesaplama"}
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      Para birimi başına tek POST; tutarMin/tutarMax x vadeMin/vadeMax matrisi.
+      robots.txt yalnızca '*.pdf'i yasaklıyor.
+      DİKKAT — YANLIŞ UÇ NOKTA: /services/GetMevduatFaizOranlari daha kolay
+      bulunuyor ama TL için her vadeye %3 döndürüyor; bu şube tabelası,
+      dijital CepteTEB müşterisinin oranı değil (aynı gün gerçek oran %36,5).
+      ceptetebEH=E parametresi CepteTEB müşterisi oranlarını getirir.
+      Bilinen fark: sitenin hesaplama aracı bu listeden ~1 puan yüksek
+      dönüyor (muhtemelen kampanya); tabela oranı kullanılıyor.
+
+  enpara:
+    url: "https://www.enpara.com/hesaplar/mevduat-faiz-oranlari"
+    type: html
+    auth: none
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      Sunucu-render HTML; TL/USD/EUR sekmeleri aynı sayfada, kapsayıcı
+      class'ı `flex-table TRY_S` biçiminde. robots.txt izin veriyor.
+      UYARI: tutar kademesi "tüm hesapların TL KARŞILIĞI toplam bakiyesi"
+      üzerinden belirleniyor; döviz tablosundaki kademe sınırı yatırılan
+      döviz tutarıyla aynı birimde değil. Bugün etkisiz (tüm döviz
+      kademelerinde %0,01) ama panelde açıkça yazılıyor.
+
+  yapikredi:
+    url: "https://www.yapikredi.com.tr/_ajaxproxy/calculate-tools/calculate-flexible-interest.aspx/GetCalculationTool"
+    type: json_post
+    auth: none
+    payload: {eDeposite: false, currency: "YTL|USD|EUR"}
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      e-Mevduat hesaplama aracının kendi uç noktası — sayfadaki
+      $.Page.GetCalculationTool çağrısının birebir aynısı. Çerez/oturum/token
+      gerektirmiyor, robots.txt 'Allow: /' ve ClaudeBot'u açıkça izinli sayıyor.
+      Yanıt RateLevelList (tutar kademesi) x GroupedRateList (vade aralığı)
+      çaprazı; Rates dizisinin i'inci elemanı i'inci kademeye aittir.
+      Vade olarak StartTenor yazılıyor (bkz. parser docstring'i).
+
+  emlakkatilim:
+    url: "https://www.emlakkatilim.com.tr/Plugins/CalculateProfitShareRate"
+    type: json_post_form
+    auth: none
+    status: active
+    institution: EMLAKKATILIM
+    last_verified: 2026-08-25
+    note: >
+      AÇILDI 2026-08-25. Önceki kayıt "kapalı" diyordu ve gerekçesi şuydu:
+      katılma hesabı sayfasındaki sayılar yıllık getiri değil, KÂR PAYLAŞIM
+      ORANI. Bu doğruydu ama eksikti — bankanın hesaplama aracının kendi uç
+      noktası (sayfadaki data-service-url özniteliğinden bulundu) gerçek bir
+      YILLIK oran döndürüyor: GrossProfitShareYearly / NetProfitShareYearly.
+      Tutar + vade + para birimi veriliyor, SegmentName ile tutar kademesi
+      (Klasik/Altın/Platin/Platin+) dönüyor. collectors/participation_rates.py.
+      SINIR: uç nokta kademe TABLOSU vermiyor, tek hesaplama veriyor; kademe
+      sınırları tutar merdiveni örneklenerek bulunuyor ve ara tutarlarda
+      BİR ALT örneğin oranı gösteriliyor (muhafazakâr yön).
+      Kâr paylaşım oranı ayrıca profit_share_endpoints altında toplanmaya
+      devam ediyor — o ayrı ve gerçek bir bilgi.
+
+  kuveytturk:
+    url: "https://www.kuveytturk.com.tr/hesaplama-araclari/kar-payi-hesaplama"
+    type: js_discovered_json
+    auth: none
+    status: active
+    institution: KUVEYTTURK
+    last_verified: 2026-08-25
+    note: >
+      GERÇEKLEŞEN kâr payı oranları (1/3/6/12 ay; TL/USD/EUR). Uç nokta
+      adresi JS paketindeki ApiEndpoints nesnesinde `ck0d84?<HASH>` biçiminde
+      duruyor; hash dağıtımla değiştiği için KODA GÖMÜLMÜYOR, her koşuda
+      zincirleme keşfediliyor: sayfa -> magiclick.core.min.js -> ApiEndpoints
+      -> lastProfitShareRates. Sabitlenseydi banka yayın yaptığında toplayıcı
+      sessizce 404 almaya başlardı. collectors/participation_rates.py.
+      NOT: bu oranlar GEÇMİŞTE GERÇEKLEŞENDİR, taahhüt değildir.
+
+  isbank:
+    status: blocked
+    blocked_reason: "WAF — bkz. fx_endpoints.isbank"
+  ziraat:
+    status: unverified
+    note: >
+      Kur uç noktası açıldı ama mevduat/kredi oranı için ayrı bir uç nokta
+      henüz bulunamadı; hesaplama araçları sayfaları 404 veriyor.
+  garantibbva:
+    status: blocked
+    blocked_reason: "HTTP 500 (oturum çerezi gerekiyor) — bkz. fx_endpoints.garantibbva"
+
+# ---------------------------------------------------------------------------
+# Kredi faiz oranları — collectors/loan_rates.py
+# ---------------------------------------------------------------------------
+loan_endpoints:
+  vakifbank:
+    url: "https://inbound.apigateway.vakifbank.com.tr:8443/loanProductList"
+    type: two_step_token
+    auth: oob_token
+    status: active
+    institution: VAKIFBANK
+    last_verified: 2026-08-23
+    # covers/missing: kredi TÜRÜ bazında kapsam. Panel "bu türde neden bu
+    # banka yok" sorusunu buradan cevaplıyor (app/panels/loan.py). Düz
+    # metin note'a gömülü kalsaydı ekranda gösterilemezdi.
+    covers: [personal, housing]
+    missing:
+      vehicle: "Ürün kataloğunda taşıt kredisi dönmüyor — banka bu API'de yayınlamıyor."
+    note: >
+      Tek çağrıda tüm ürünler; KKDF/BSMV oranlarını da döndürüyor
+      (config/taxes.yaml'daki ihtiyaç kredisi BSMV değeri buradan düzeltildi).
+      Konut + İhtiyaç var, taşıt ürünü katalogda dönmüyor.
+
+  yapikredi:
+    base_url: "https://www.yapikredi.com.tr/_ajaxproxy/calculate-tools/retail-credits.aspx"
+    type: json_post_chain
+    auth: none
+    status: active
+    institution: YAPIKREDI
+    last_verified: 2026-08-24
+    covers: [personal, housing]
+    missing:
+      vehicle: "Taşıt kategorisi (A1 KASKOLU) her tutar/vade denemesinde boş yanıt döndürüyor."
+    # Projedeki TEK denetim çapası: bu uç nokta bankanın KENDİ taksit
+    # tutarını da döndürüyor (MonthlyInstallmentAmount). Her koşuda bizim
+    # anüite hesabımızla karşılaştırılıyor — bkz. collectors/loan_rates.py
+    # reference_quotes() ve store/models.py::LoanReferenceQuote.
+    provides_reference_installment: true
+    note: >
+      İki ayrı zincir: ihtiyaç için GetSubProduct -> GetCampaign ->
+      GetPersonalCreditPaymentPlan, konut için
+      GetCategoryCodeListByCreditClass -> CalculateByCreditAmount.
+      TUZAK: GetPersonalCreditPaymentPlan'a installmentAmount=0 gönderilirse
+      yanıt HTTP 200 ama BOŞ döner; null gönderilmesi şart.
+      Taşıt (kategori A1) her denemede PaymentList=null döndürüyor — banka
+      bu araç üzerinden taşıt fiyatı yayınlamıyor, uydurulmadı.
+
+  enpara:
+    url: "https://www.enpara.com/krediler/ihtiyac-kredisi"
+    type: html
+    auth: none
+    status: active
+    institution: ENPARA
+    last_verified: 2026-08-24
+    covers: [personal]
+    missing:
+      housing: "Enpara konut kredisi ürünü yayınlamıyor."
+      vehicle: "Enpara taşıt kredisi ürünü yayınlamıyor."
+    note: >
+      DÜZELTİLDİ 2026-08-24: bu kaynak "CSRF token gerektiriyor" diye kapalı
+      yazılmıştı, yanlıştı. Oran tablosu sayfaya sunucu tarafında gömülü:
+      `loanInterestRates = JSON.parse('[...]')`. Tek GET yeterli. Ders:
+      "değer ekranda JS ile geliyor" ile "veri sayfada yok" aynı şey değil.
+
+  emlakkatilim:
+    url: "https://www.emlakkatilim.com.tr/tr/bireysel/finansmanlar/ihtiyac-finansmani"
+    type: html
+    auth: none
+    status: active
+    institution: EMLAKKATILIM
+    last_verified: 2026-08-23
+    covers: [personal]
+    missing:
+      housing: "Konut finansmanı sayfasında oran yok; yalnızca teminat oranı ve azami vade yayınlanıyor."
+      vehicle: "Taşıt finansmanı sayfasında oran yok; yalnızca teminat oranı ve azami vade yayınlanıyor."
+    note: >
+      Katılım bankası: bu bir faiz değil KÂR ORANI (%1,69 aylık). Panel ayrımı
+      institutions.kind='participation' üzerinden yapıyor.
+      SINIR: sayfadaki tablonun başlığı "ÖRNEK İhtiyaç Finansmanı Tablosu" ve
+      tek satırı var (30.000 TL / 12 ay). Tutar x vade matrisi DEĞİL; farklı
+      vadede oran değişebilir, o yüzden term_min=term_max=12 yazılıyor ve
+      panel başka vadede uyarı veriyor.
+      Konut ve taşıt finansmanı sayfaları kasıtlı okunmuyor: oradaki tablolar
+      oran değil, teminat oranı ve azami vade yayınlıyor.
+
+  akbank:
+    url: "https://www.akbank.com/_layouts/15/Akbank/CalcTools/Ajax.aspx/GetCreditInfo"
+    type: json_post
+    auth: none
+    status: active
+    robots_override: true
+    institution: AKBANK
+    last_verified: 2026-08-24
+    covers: [personal, housing, vehicle]
+    products: {personal: "10-10-10-8207", housing: "30-10-10-8398", vehicle: "20-10-10-9991"}
+    note: >
+      Üç kredi türü de burada; projedeki TEK taşıt kredisi kaynağı.
+      ServisData.ucretOut.urunFaizListesi gerçek VADE x TUTAR matrisi.
+      DİKKAT: yanıt urunFonOrn/urunVrgOrn (KKDF/BSMV) döndürüyor ama konut
+      için BSMV'yi 15 diyor — konut 6802 s. Kanun m.29 ile istisnadır ve
+      VakıfBank verisi 0 diyor. Vergi oranları buradan OKUNMUYOR;
+      config/taxes.yaml yetkili kaynak.
+
+  teb:
+    url: "https://www.cepteteb.com.tr/services/GetHesapMakinesiList"
+    type: json_get
+    auth: none
+    status: blocked
+    institution: TEB
+    last_verified: 2026-08-23
+    covers: []
+    blocked_reason: >
+      Mevduat servisi çalışıyor ama kredi hesap makinesi uç noktası
+      /Hata/Error500'e yönlendiriyor (HTTP 302). Sayfada başka bir kredi
+      oranı uç noktası bulunamadı.
+
+  isbank:
+    status: blocked
+    institution: ISBANK
+    covers: []
+    blocked_reason: "WAF — bkz. fx_endpoints.isbank. Kredi uç noktası da aynı blok sayfasını döndürüyor."
+  ziraat:
+    status: unverified
+    institution: ZIRAAT
+    covers: []
+    blocked_reason: "Kur uç noktası açık ama kredi/hesaplama sayfaları 404; oran uç noktası bulunamadı."
+  garantibbva:
+    status: blocked
+    institution: GARANTIBBVA
+    covers: []
+    blocked_reason: "HTTP 500 (oturum çerezi gerekiyor) — bkz. fx_endpoints.garantibbva."
+  kuveytturk:
+    status: unverified
+    institution: KUVEYTTURK
+    covers: []
+    blocked_reason: "Finansman kâr oranı uç noktası henüz araştırılmadı."
+  halkbank:
+    status: unverified
+    institution: HALKBANK
+    covers: []
+    blocked_reason: "Kur uç noktasında TLS el sıkışması tamamlanmıyor; kredi tarafı hiç denenmedi."
+
+# ---------------------------------------------------------------------------
+# Katılım bankası KÂR PAYLAŞIM oranları — collectors/profit_shares.py
+#
+# DİKKAT: buradaki sayılar yıllık getiri DEĞİL, bankanın elde ettiği kârın
+# müşteriye düşen yüzdesidir (%93 = kârın %93'ü katılımcıya). Ayrı bir
+# tabloda (profit_share_ratios) tutulur ve getiri hesabına ASLA sokulmaz.
+# Bu bölüm envantere sonradan eklendi (2026-08-25): toplayıcı vardı ama
+# kaynağı sources.yaml'da yazmıyordu — panelin "bu veri nereden geliyor"
+# sorusunu cevaplayamamasının sebeplerinden biri buydu.
+# ---------------------------------------------------------------------------
+profit_share_endpoints:
+  emlakkatilim:
+    url: "https://www.emlakkatilim.com.tr/tr/bireysel/hesaplar/katilma-hesaplari/katilma-hesabi"
+    type: html
+    auth: none
+    status: active
+    institution: EMLAKKATILIM
+    last_verified: 2026-08-24
+    note: >
+      Sunucu-render HTML tablo; bakiye kademesi x vade matrisi. Yayınlanan
+      değer "Kar Paylaşım Oranı". Banka yıllık getiri oranı yayınlamıyor,
+      bu yüzden mevduatla doğrudan kıyaslanamıyor (bkz. PLAN.md madde 2).
+
+  kuveytturk:
+    url: "https://www.kuveytturk.com.tr/"
+    type: html
+    auth: none
+    status: active
+    institution: KUVEYTTURK
+    last_verified: 2026-08-24
+    note: >
+      "87-13" biçimindeki müşteri/banka payı ayrıştırılıyor; ilk sayı
+      müşteriye düşen paydır. Emlak Katılım ile aynı sınır geçerli:
+      bu bir yıllık getiri oranı değildir.
+
+# ---------------------------------------------------------------------------
+# Fon fiyat kaynakları — collectors/akportfoy.py (+ ileride başka sağlayıcılar)
+# Fon LİSTESİ config/funds.yaml'da; burası yalnızca SAĞLAYICI envanteri.
+# ---------------------------------------------------------------------------
+fund_endpoints:
+  akportfoy:
+    url: "https://www.akportfoy.com.tr/tr/fon/{code}"
+    type: html_embedded_json
+    auth: none
+    status: active
+    last_verified: 2026-08-23
+    note: >
+      Tam geçmiş fiyat serisi sayfaya `var fundVals = {...}` olarak gömülü;
+      API çağrısı, token veya CSRF yok. Sitede robots.txt YOK (HTTP 404).
+      TUZAK: `Date` alanı epoch MİLİSANİYE ve İstanbul gece yarısına denk
+      geliyor; UTC olarak yorumlanırsa tarihler bir gün geriye kayar.
+
+  garantiportfoy:
+    url: "https://www.garantibbvaportfoy.com.tr/webservice/fundsinddailyds"
+    type: anon_token_json
+    auth: anon_bearer
+    status: active
+    last_verified: 2026-08-25
+    note: >
+      Üç adımlı, login'siz akış: /webservice/gettoken (anonim bearer,
+      client_id "garantiportfoy:frontend") -> /webservice/lastdate ->
+      /webservice/fundsinddailyds. Belirteç bir KULLANICI kimliği değil,
+      sitenin kendi ön yüzünün herkese açık istemci belirtecidir; VakıfBank
+      akışıyla aynı desen. DİKKAT: dönen seri BİRİM PAY FİYATI DEĞİL,
+      "1.000 TL yatırılsaydı" endeksidir; panel bunu açıkça yazar
+      (collectors/fund_providers.py::GarantiPortfoyProvider).
+
+  isportfoy:
+    url: "https://www.isportfoy.com.tr/tr/yatirim-fonlari"
+    type: html
+    auth: none
+    status: unverified
+    last_verified: 2026-08-25
+    blocked_reason: >
+      Fon LİSTESİ okunabiliyor (kod + ad + sayfa adresi gömülü JSON olarak
+      geliyor; TI2 = İş Portföy Hisse Senedi TL Fonu gibi). Ama GEÇMİŞ FİYAT
+      SERİSİ uç noktası bulunamadı: fon detay sayfasında data-service-url ya
+      da gömülü seri yok, ayrı bir "/getiri-ve-fiyatlar" sayfası var ve
+      henüz incelenmedi. Engel yok, araştırma yarım — bir sonraki adım orası.
+
+  tefas:
+    url: "https://www.tefas.gov.tr/api/DB/BindHistoryInfo"
+    type: json_post
+    auth: none
+    status: blocked
+    last_verified: 2026-08-24
+    blocked_reason: >
+      F5 Shape/BIG-IP bot challenge (window["bobcmn"], /TSPD/,
+      DOSL7.challenge.support_id). Eski API uç noktaları 404. Bunu aşmak
+      obfuscated JS çalıştırıp çerez üretmek, yani BOT TESPİTİ ATLATMAK
+      demektir. Kullanıcının robots.txt kararı bunu KAPSAMIYOR; İş Bankası
+      WAF'ıyla aynı kategoride. Bilinçli olarak yapılmıyor.
+
+evds:
+  url: "https://evds2.tcmb.gov.tr/service/evds"
+  auth: api_key
+  api_key_env: EVDS_API_KEY
+  note: "Sektör ortalaması faiz oranları — banka bazlı değil, çapa olarak kullan. Henüz entegre edilmedi (anahtar gerekiyor)."
+
+# NOT: fon kaynakları artık fund_endpoints altında (yukarıda).
+
+funds:
+  # is_equity_heavy = true olan fonlar stopajdan muaf (config/taxes.yaml: funds.equity_heavy).
+  # Resmî işaret, fon adındaki "(Hisse Senedi Yoğun Fon)" ibaresidir; collector
+  # bunu sayfa başlığından okuyup buradaki değeri doğrular ve gerekirse düzeltir.
+  - {code: "AK3", name: "Ak Portföy Hisse Senedi (TL) Fonu (Hisse Senedi Yoğun Fon)",            is_equity_heavy: true,  benchmark: "BIST100"}
+  - {code: "ADP", name: "Ak Portföy BIST Banka Endeksi Hisse Senedi (TL) Fonu (HSYF)",           is_equity_heavy: true,  benchmark: "BIST-BANK"}
+  - {code: "AFA", name: "Ak Portföy Amerika Yabancı Hisse Senedi Fonu",                          is_equity_heavy: false, benchmark: "S&P500"}
+  - {code: "AFO", name: "Ak Portföy Altın Fonu",                                                 is_equity_heavy: false, benchmark: "XAU"}
+
+collection_etiquette:
+  min_delay_seconds: 2
+  max_delay_seconds: 5
+  user_agent: "finans-agent/0.1 (kişisel kullanım; iletişim: efebarisaltinay@gmail.com)"
+  respect_robots_txt: true
+  use_if_modified_since: true

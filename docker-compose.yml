@@ -1,0 +1,88 @@
+# Kurulum:
+#   docker compose up -d      # panel http://127.0.0.1:8501
+#
+# .env İSTEĞE BAĞLI (varsayılanlar çalışır). LLM fallback'i açmak ya da
+# saklama sürelerini değiştirmek istersen:  cp .env.example .env
+#
+# Veri toplama iki şekilde yapılabilir:
+#   1) scheduler servisi (varsayılan, otomatik)  -> aşağıdaki 'scheduler'
+#   2) elle tek seferlik: docker compose run --rm worker all
+
+# Ayarların TAMAMI isteğe bağlı; her birinin makul bir varsayılanı var.
+#
+# NEDEN `env_file` DEĞİL: `env_file: - .env` yazıldığında dosya yoksa
+# `docker compose up` hiç başlamadan "open .env: no such file" ile düşüyordu.
+# Compose'un `required: false` biçimi ancak v2.24+ ile geldi; bu yüzden
+# değişkenler burada `${VAR:-varsayılan}` ile geçiriliyor. Compose proje
+# dizinindeki `.env` dosyasını değişken yerine koyma (interpolation) için
+# ZATEN okuyor ve dosya yoksa hata vermiyor — yani `.env` varsa çalışır,
+# yoksa da çalışır.
+x-env: &env
+  TZ: ${TZ:-Europe/Istanbul}
+  LOG_DIR: ${LOG_DIR:-data/logs}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # LLM fallback varsayılan olarak KAPALI; anahtar girilse bile açıkça
+  # açılmadıkça tek token harcanmaz.
+  LLM_FALLBACK_ENABLED: ${LLM_FALLBACK_ENABLED:-0}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+  LLM_MODEL: ${LLM_MODEL:-gemini-2.5-flash-lite}
+  LLM_MAX_INPUT_CHARS: ${LLM_MAX_INPUT_CHARS:-8000}
+  LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-2000}
+  LLM_MAX_CALLS_PER_RUN: ${LLM_MAX_CALLS_PER_RUN:-1}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-45}
+  # Boşsa maliyet "bilinmiyor" gösterilir; 0 yazmak "bedava" demek olurdu.
+  LLM_PRICE_INPUT_PER_1M: ${LLM_PRICE_INPUT_PER_1M:-}
+  LLM_PRICE_OUTPUT_PER_1M: ${LLM_PRICE_OUTPUT_PER_1M:-}
+  CATCHUP_INTERVAL_MINUTES: ${CATCHUP_INTERVAL_MINUTES:-30}
+  RUN_ON_START: ${RUN_ON_START:-1}
+  # Kayıt budama (gün). 0 = sınırsız sakla. Bkz. store/retention.py.
+  RETAIN_HTTP_REQUEST_DAYS: ${RETAIN_HTTP_REQUEST_DAYS:-30}
+  RETAIN_SOURCE_RUN_DAYS: ${RETAIN_SOURCE_RUN_DAYS:-180}
+  RETAIN_SCRAPE_RUN_DAYS: ${RETAIN_SCRAPE_RUN_DAYS:-180}
+  RETAIN_SNAPSHOT_DAYS: ${RETAIN_SNAPSHOT_DAYS:-14}
+  EVDS_API_KEY: ${EVDS_API_KEY:-}
+
+services:
+  panel:
+    build: .
+    image: finans-agent:latest
+    container_name: finans-panel
+    ports:
+      # Sadece localhost'a bağlanır. Dışarı açmak istersen "8501:8501" yap
+      # ve ÖNÜNE bir reverse proxy + kimlik doğrulama koy — bu panelde
+      # oturum yönetimi YOK, açan herkes görür.
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - finans-data:/app/data
+    environment: *env
+    restart: unless-stopped
+
+  # Sürekli çalışıp toplayıcıları zamanında tetikler (cron'a gerek yok).
+  scheduler:
+    build: .
+    image: finans-agent:latest
+    container_name: finans-scheduler
+    volumes:
+      - finans-data:/app/data
+    environment: *env
+    entrypoint: ["python", "-u", "scheduler.py"]
+    restart: unless-stopped
+    depends_on:
+      - panel
+
+  # Elle çalıştırma: docker compose run --rm worker all
+  worker:
+    build: .
+    image: finans-agent:latest
+    volumes:
+      - finans-data:/app/data
+    environment: *env
+    entrypoint: ["python", "worker.py"]
+    profiles: ["tools"]
+
+volumes:
+  # Adlandırılmış volume: bind mount'ta konteyner kullanıcısı (uid 10001)
+  # host dizinine yazamayabiliyor. Yedek almak için:
+  #   docker run --rm -v finans-data:/d -v "$PWD":/b alpine tar czf /b/finans-data.tgz -C /d .
+  finans-data:

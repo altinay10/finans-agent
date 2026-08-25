@@ -1,0 +1,78 @@
+# Fon kayıt defteri — panelin fon simülasyonunda görünen fonlar.
+#
+# NEDEN AYRI DOSYA: fon listesi eskiden sources.yaml'a gömülüydü ve yalnızca
+# Ak Portföy okunabiliyordu; yeni bir fon eklemek kod değişikliği
+# gerektiriyordu. Artık fon eklemek = buraya bir satır. Panelden de
+# eklenebilir (Fon Simülasyonu > "Fon ekle"), o da bu dosyaya yazar.
+#
+# ALANLAR
+#   code      TEFAS fon kodu (3 harf). Veritabanı anahtarı.
+#   provider  collectors/fund_providers.py'deki sağlayıcı anahtarı.
+#   ref       sağlayıcıya özgü adres parçası:
+#               akportfoy      -> fon kodu (URL: /tr/fon/<ref>)
+#               garantiportfoy -> sayfa kısa adı (URL: /<ref>)
+#   name      insan okuyabilir ad. Sağlayıcı sayfadan gerçek adı okur ve
+#             ÜZERİNE YAZAR; buradaki değer yalnızca ilk görünüm içindir.
+#   benchmark bilgi amaçlı; hesaba girmez.
+#
+# is_equity_heavy BURADA TUTULMAZ. Stopaj kararı, resmî fon adındaki
+# "(Hisse Senedi Yoğun Fon)" ibaresine bağlıdır ve sağlayıcı onu sayfadan
+# okur. Elle girilen bir bayrağa bırakılsaydı yanlış bir "true" doğrudan
+# vergiyi sıfırlardı.
+
+funds:
+- code: AK3
+  provider: akportfoy
+  ref: AK3
+  name: Ak Portföy Hisse Senedi (TL) Fonu
+  benchmark: BIST100
+- code: ADP
+  provider: akportfoy
+  ref: ADP
+  name: Ak Portföy BIST Banka Endeksi Hisse Senedi (TL) Fonu
+  benchmark: BIST-BANK
+- code: AFA
+  provider: akportfoy
+  ref: AFA
+  name: Ak Portföy Amerika Yabancı Hisse Senedi Fonu
+  benchmark: S&P500
+- code: AFO
+  provider: akportfoy
+  ref: AFO
+  name: Ak Portföy Altın Fonu
+  benchmark: XAU
+- code: GAE
+  provider: garantiportfoy
+  ref: bist-30-endeksi-hisse-senedi-fonu-hisse-senedi-yogun-fon
+  name: Garanti BBVA Portföy BIST 30 Endeksi Hisse Senedi (TL) Fonu
+  benchmark: BIST30
+- code: GHS
+  provider: garantiportfoy
+  ref: hisse-senedi-fonu-hisse-senedi-yogun-fon
+  name: Garanti BBVA Portföy Hisse Senedi (TL) Fonu
+  benchmark: BIST100
+- code: GPB
+  provider: garantiportfoy
+  ref: birinci-para-piyasasi-fonu
+  name: Garanti BBVA Portföy Birinci Para Piyasası (TL) Fonu
+  benchmark: TLREF
+- code: GNP
+  provider: garantiportfoy
+  ref: nema-para-piyasasi-tl-fonu
+  name: Garanti BBVA Portföy Nema Para Piyasası (TL) Fonu
+  benchmark: TLREF
+- code: GTA
+  provider: garantiportfoy
+  ref: altin-fonu
+  name: Garanti BBVA Portföy Altın Fonu
+  benchmark: XAU
+- code: GTZ
+  provider: garantiportfoy
+  ref: gumus-fon-sepeti-fonu
+  name: Garanti BBVA Portföy Gümüş Fon Sepeti Fonu
+  benchmark: XAG
+- code: TGT
+  provider: garantiportfoy
+  ref: kisa-vadeli-borclanma-araclari-fonu
+  name: Garanti BBVA Portföy Kısa Vadeli Borçlanma Araçları Fonu
+  benchmark: TLREF

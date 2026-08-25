@@ -1,0 +1,31 @@
+# Docker KULLANMIYORSAN gereken ikinci birim.
+#
+# Panel bankalara hiç gitmez, yalnızca veritabanını okur (tasarım §01).
+# Toplama işini bu birim yapar. Kurulumda ikisi de etkinleştirilmeli:
+#
+#   sudo cp deploy/finans-*.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now finans-panel finans-scheduler
+#
+# Alternatif: cron (deploy/crontab.example). İkisini AYNI ANDA kurma —
+# toplayıcılar iki kez çalışır.
+
+[Unit]
+Description=Finans Agent - veri toplayici zamanlayici
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=finans
+WorkingDirectory=/srv/finans-agent
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Europe/Istanbul
+# Açılışta bir kez hepsini çeker; yeniden başlatmada kaçırılan saati telafi eder.
+Environment=RUN_ON_START=1
+ExecStart=/srv/finans-agent/venv/bin/python -u scheduler.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

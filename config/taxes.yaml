@@ -1,0 +1,44 @@
+# Vergi ve kesinti oranları — tarih aralıklı.
+#
+# UYARI: Bu dosyadaki değerler taslaktır ve "DOĞRULA" notu taşıyanlar
+# koda geçmeden önce birincil kaynaktan (Resmi Gazete / banka hesaplama
+# aracı) teyit edilmelidir. Bkz. tasarım dokümanı §05.
+#
+# Her kalem valid_from tarihine göre azalan sırada tutulur; bir tarih için
+# uygulanacak satır, o tarihten önceki veya o tarihe eşit en yakın valid_from'dur.
+
+loans:
+  housing:
+    - valid_from: 2026-01-01
+      kkdf: 0.00
+      bsmv: 0.00
+      source: "6802 s. Kanun m.29 istisnası; VakıfBank loanProductList canlı verisiyle doğrulandı (2026-08-23): KONUT KREDİSİ Kkdf=0.00 Bsmv=0.00"
+  vehicle:
+    - valid_from: 2026-01-01
+      kkdf: 0.15
+      bsmv: 0.05
+      source: "banka hesaplama aracıyla kalibre et — DOĞRULA (BSMV %5-%15 arası çelişkili)"
+  personal:
+    - valid_from: 2026-01-01
+      kkdf: 0.15
+      bsmv: 0.15
+      source: "VakıfBank loanProductList canlı verisiyle doğrulandı (2026-08-23): İHTİYAÇ KREDİSİ Kkdf=15.0 Bsmv=15.0"
+
+deposits:
+  TRY:
+    - valid_from: 2026-01-01
+      brackets:                       # gün üst sınırı → stopaj (gerçek kişi)
+        - {max_days: 180, rate: 0.175}
+        - {max_days: 365, rate: 0.150}
+        - {max_days: null, rate: 0.100}
+  USD:
+    - valid_from: 2026-01-01
+      brackets: [{max_days: null, rate: 0.25}]
+  EUR:
+    - valid_from: 2026-01-01
+      brackets: [{max_days: null, rate: 0.25}]
+
+funds:
+  equity_heavy: 0.00
+  default: 0.175
+  note: "09.07.2025 sonrası alımlar için; önceki alımlar kademeli — DOĞRULA"

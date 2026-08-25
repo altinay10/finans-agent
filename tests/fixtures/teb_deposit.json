@@ -1,0 +1,1560 @@
+{
+ "TL": [
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 1,
+   "vadeMax": 7,
+   "faizOran": 9.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 1,
+   "vadeMax": 7,
+   "faizOran": 9.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 1,
+   "vadeMax": 7,
+   "faizOran": 9.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 1,
+   "vadeMax": 7,
+   "faizOran": 9.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 1,
+   "vadeMax": 7,
+   "faizOran": 9.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 1,
+   "vadeMax": 7,
+   "faizOran": 9.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 1,
+   "vadeMax": 7,
+   "faizOran": 8.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 1,
+   "vadeMax": 7,
+   "faizOran": 8.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 8,
+   "vadeMax": 27,
+   "faizOran": 10.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 8,
+   "vadeMax": 27,
+   "faizOran": 10.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 8,
+   "vadeMax": 27,
+   "faizOran": 10.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 8,
+   "vadeMax": 27,
+   "faizOran": 10.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 8,
+   "vadeMax": 27,
+   "faizOran": 10.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 8,
+   "vadeMax": 27,
+   "faizOran": 10.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 8,
+   "vadeMax": 27,
+   "faizOran": 9.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 8,
+   "vadeMax": 27,
+   "faizOran": 9.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 28,
+   "vadeMax": 31,
+   "faizOran": 11.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 28,
+   "vadeMax": 31,
+   "faizOran": 11.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 28,
+   "vadeMax": 31,
+   "faizOran": 11.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 28,
+   "vadeMax": 31,
+   "faizOran": 11.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 28,
+   "vadeMax": 31,
+   "faizOran": 11.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 28,
+   "vadeMax": 31,
+   "faizOran": 11.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 28,
+   "vadeMax": 31,
+   "faizOran": 10.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 28,
+   "vadeMax": 31,
+   "faizOran": 10.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 33.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 33.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 34.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 35.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 36.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 37.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 36.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 36.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 46,
+   "vadeMax": 55,
+   "faizOran": 33.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 46,
+   "vadeMax": 55,
+   "faizOran": 33.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 46,
+   "vadeMax": 55,
+   "faizOran": 34.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 46,
+   "vadeMax": 55,
+   "faizOran": 34.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 46,
+   "vadeMax": 55,
+   "faizOran": 34.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 46,
+   "vadeMax": 55,
+   "faizOran": 35.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 46,
+   "vadeMax": 55,
+   "faizOran": 34.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 46,
+   "vadeMax": 55,
+   "faizOran": 16.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 56,
+   "vadeMax": 75,
+   "faizOran": 33.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 56,
+   "vadeMax": 75,
+   "faizOran": 33.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 56,
+   "vadeMax": 75,
+   "faizOran": 34.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 56,
+   "vadeMax": 75,
+   "faizOran": 34.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 56,
+   "vadeMax": 75,
+   "faizOran": 34.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 56,
+   "vadeMax": 75,
+   "faizOran": 35.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 56,
+   "vadeMax": 75,
+   "faizOran": 34.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 56,
+   "vadeMax": 75,
+   "faizOran": 16.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 76,
+   "vadeMax": 91,
+   "faizOran": 33.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 76,
+   "vadeMax": 91,
+   "faizOran": 33.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 76,
+   "vadeMax": 91,
+   "faizOran": 34.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 76,
+   "vadeMax": 91,
+   "faizOran": 34.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 76,
+   "vadeMax": 91,
+   "faizOran": 34.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 76,
+   "vadeMax": 91,
+   "faizOran": 35.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 76,
+   "vadeMax": 91,
+   "faizOran": 34.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 76,
+   "vadeMax": 91,
+   "faizOran": 16.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 92,
+   "vadeMax": 110,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 92,
+   "vadeMax": 110,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 92,
+   "vadeMax": 110,
+   "faizOran": 32.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 92,
+   "vadeMax": 110,
+   "faizOran": 32.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 92,
+   "vadeMax": 110,
+   "faizOran": 33.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 92,
+   "vadeMax": 110,
+   "faizOran": 33.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 92,
+   "vadeMax": 110,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 92,
+   "vadeMax": 110,
+   "faizOran": 16.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 111,
+   "vadeMax": 180,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 111,
+   "vadeMax": 180,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 111,
+   "vadeMax": 180,
+   "faizOran": 32.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 111,
+   "vadeMax": 180,
+   "faizOran": 32.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 111,
+   "vadeMax": 180,
+   "faizOran": 33.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 111,
+   "vadeMax": 180,
+   "faizOran": 33.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 111,
+   "vadeMax": 180,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 111,
+   "vadeMax": 180,
+   "faizOran": 16.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 181,
+   "vadeMax": 270,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 181,
+   "vadeMax": 270,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 181,
+   "vadeMax": 270,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 181,
+   "vadeMax": 270,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 181,
+   "vadeMax": 270,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 181,
+   "vadeMax": 270,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 181,
+   "vadeMax": 270,
+   "faizOran": 30.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 181,
+   "vadeMax": 270,
+   "faizOran": 15.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 271,
+   "vadeMax": 364,
+   "faizOran": 13.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 271,
+   "vadeMax": 364,
+   "faizOran": 13.75,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 271,
+   "vadeMax": 364,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 271,
+   "vadeMax": 364,
+   "faizOran": 15.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 271,
+   "vadeMax": 364,
+   "faizOran": 15.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 271,
+   "vadeMax": 364,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 271,
+   "vadeMax": 364,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 271,
+   "vadeMax": 364,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 50000,
+   "vadeMin": 365,
+   "vadeMax": 380,
+   "faizOran": 12.5,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 50001,
+   "tutarMax": 100000,
+   "vadeMin": 365,
+   "vadeMax": 380,
+   "faizOran": 12.75,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 250000,
+   "vadeMin": 365,
+   "vadeMax": 380,
+   "faizOran": 13.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 250001,
+   "tutarMax": 500000,
+   "vadeMin": 365,
+   "vadeMax": 380,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 365,
+   "vadeMax": 380,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 365,
+   "vadeMax": 380,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 5000001,
+   "tutarMax": 10000000,
+   "vadeMin": 365,
+   "vadeMax": 380,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  },
+  {
+   "tutarMin": 10000001,
+   "tutarMax": 999999999999999,
+   "vadeMin": 365,
+   "vadeMax": 380,
+   "faizOran": 14.0,
+   "paraKodu": "TL"
+  }
+ ],
+ "USD": [
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 1,
+   "vadeMax": 3,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 1,
+   "vadeMax": 3,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 1,
+   "vadeMax": 3,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 4,
+   "vadeMax": 7,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 4,
+   "vadeMax": 7,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 4,
+   "vadeMax": 7,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 8,
+   "vadeMax": 14,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 8,
+   "vadeMax": 14,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 8,
+   "vadeMax": 14,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 15,
+   "vadeMax": 24,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 15,
+   "vadeMax": 24,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 15,
+   "vadeMax": 24,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 25,
+   "vadeMax": 31,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 25,
+   "vadeMax": 31,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 25,
+   "vadeMax": 31,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 0.01,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 0.01,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 0.01,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 46,
+   "vadeMax": 62,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 46,
+   "vadeMax": 62,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 46,
+   "vadeMax": 62,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 63,
+   "vadeMax": 91,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 63,
+   "vadeMax": 91,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 63,
+   "vadeMax": 91,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 92,
+   "vadeMax": 122,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 92,
+   "vadeMax": 122,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 92,
+   "vadeMax": 122,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 123,
+   "vadeMax": 152,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 123,
+   "vadeMax": 152,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 123,
+   "vadeMax": 152,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 153,
+   "vadeMax": 180,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 153,
+   "vadeMax": 180,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 153,
+   "vadeMax": 180,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 181,
+   "vadeMax": 212,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 181,
+   "vadeMax": 212,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 181,
+   "vadeMax": 212,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 213,
+   "vadeMax": 242,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 213,
+   "vadeMax": 242,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 213,
+   "vadeMax": 242,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 243,
+   "vadeMax": 272,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 243,
+   "vadeMax": 272,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 243,
+   "vadeMax": 272,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 273,
+   "vadeMax": 364,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 273,
+   "vadeMax": 364,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 273,
+   "vadeMax": 364,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 365,
+   "vadeMax": 373,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 365,
+   "vadeMax": 373,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 365,
+   "vadeMax": 373,
+   "faizOran": 0.0,
+   "paraKodu": "USD"
+  }
+ ],
+ "EUR": [
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 1,
+   "vadeMax": 3,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 1,
+   "vadeMax": 3,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 1,
+   "vadeMax": 3,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 4,
+   "vadeMax": 7,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 4,
+   "vadeMax": 7,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 4,
+   "vadeMax": 7,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 8,
+   "vadeMax": 14,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 8,
+   "vadeMax": 14,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 8,
+   "vadeMax": 14,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 15,
+   "vadeMax": 24,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 15,
+   "vadeMax": 24,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 15,
+   "vadeMax": 24,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 25,
+   "vadeMax": 31,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 25,
+   "vadeMax": 31,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 25,
+   "vadeMax": 31,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 1000001,
+   "tutarMax": 5000000,
+   "vadeMin": 32,
+   "vadeMax": 45,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 46,
+   "vadeMax": 62,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 46,
+   "vadeMax": 62,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 46,
+   "vadeMax": 62,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 63,
+   "vadeMax": 91,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 63,
+   "vadeMax": 91,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 63,
+   "vadeMax": 91,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 92,
+   "vadeMax": 122,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 92,
+   "vadeMax": 122,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 92,
+   "vadeMax": 122,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 123,
+   "vadeMax": 152,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 123,
+   "vadeMax": 152,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 123,
+   "vadeMax": 152,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 153,
+   "vadeMax": 180,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 153,
+   "vadeMax": 180,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 153,
+   "vadeMax": 180,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 181,
+   "vadeMax": 212,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 181,
+   "vadeMax": 212,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 181,
+   "vadeMax": 212,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 213,
+   "vadeMax": 242,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 213,
+   "vadeMax": 242,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 213,
+   "vadeMax": 242,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 243,
+   "vadeMax": 272,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 243,
+   "vadeMax": 272,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 243,
+   "vadeMax": 272,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 273,
+   "vadeMax": 364,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 273,
+   "vadeMax": 364,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 273,
+   "vadeMax": 364,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 0,
+   "tutarMax": 100000,
+   "vadeMin": 365,
+   "vadeMax": 373,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 100001,
+   "tutarMax": 500000,
+   "vadeMin": 365,
+   "vadeMax": 373,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  },
+  {
+   "tutarMin": 500001,
+   "tutarMax": 1000000,
+   "vadeMin": 365,
+   "vadeMax": 373,
+   "faizOran": 0.0,
+   "paraKodu": "EUR"
+  }
+ ]
+}

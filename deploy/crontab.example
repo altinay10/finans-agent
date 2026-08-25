@@ -1,0 +1,45 @@
+# bkz. tasarım dokümanı §09. Kurulum: crontab -e, aşağıyı yapıştır, yolu düzelt.
+#
+# NOT: Docker kullanıyorsan bu dosyaya İHTİYACIN YOK — docker-compose.yml
+# içindeki 'scheduler' servisi aynı planı konteyner içinde uyguluyor
+# (bkz. scheduler.py). Bu dosya venv + systemd kurulumu içindir.
+#
+# Tüm toplayıcılar canlı doğrulandı (2026-08-24). Hiçbir oran koda gömülü
+# değil; hepsi buradaki plana göre yeniden çekiliyor.
+#
+#   fx_banks / fx_tcmb            -> gün içinde değişir
+#   deposits / loan_rates         -> bankalar günde bir günceller
+#   profit_shares / _kt           -> katılım bankası kâr PAYLAŞIM oranları (%93 gibi)
+#   participation_rates / _kt     -> katılım bankası YILLIK kâr payı oranı (%34 gibi)
+#                                    -- ikisi farklı büyüklüktür, ikisi de gerekli
+#   funds                         -> fon fiyatı akşam yayınlanır (çok sağlayıcılı)
+
+# Kurlar: hafta içi mesai saatlerinde saatlik (gece çekmenin anlamı yok)
+0  9-18 * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py fx_banks
+
+# TCMB kuru 15:30'da kesinleşir
+30 16   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py fx_tcmb
+
+# Mevduat: VakıfBank + TEB + Enpara + Yapı Kredi + Akbank
+0  20   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py deposits
+
+# Kredi: VakıfBank + Akbank + Yapı Kredi + Enpara + Emlak Katılım
+15 20   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py loan_rates
+
+# Katılım bankası kâr paylaşım oranları
+30 20   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py profit_shares
+35 20   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py profit_shares_kt
+
+# Katılım bankası YILLIK kâr payı oranı (mevduatla kıyaslanabilir sayı)
+40 20   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py participation_rates
+45 20   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py participation_rates_kt
+
+# Fon fiyatları akşam yayınlanır (Ak Portföy + Garanti BBVA Portföy)
+0  21   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py funds
+
+# Elle tek seferde hepsini tazelemek için:
+#   ./venv/bin/python worker.py all
+
+# Kayıt tablolarını buda (http_requests en gürültülüsü). Zamanlayıcı
+# kullanılıyorsa gerekmez, o kendi günlük budamasını yapıyor.
+30 3    * * *    cd /srv/finans-agent && ./venv/bin/python -c "from store.retention import purge; purge()"

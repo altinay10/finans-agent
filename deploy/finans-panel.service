@@ -1,0 +1,32 @@
+# Raspberry Pi / sunucu, systemd — bkz. tasarım dokümanı §08.
+#
+# DİKKAT: Bu birim TEK BAŞINA yeterli DEĞİL. Panel bankalara hiç gitmez,
+# yalnızca veritabanını okur (tasarım §01). Sadece bunu kurarsan veri asla
+# tazelenmez ve panel ilk günden sonra bayat kalır.
+# Yanına ya finans-scheduler.service ya da deploy/crontab.example gerekir.
+#
+# Kurulum:
+#   sudo cp deploy/finans-*.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now finans-panel finans-scheduler
+
+[Unit]
+Description=Finans Agent paneli
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=finans
+WorkingDirectory=/srv/finans-agent
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Europe/Istanbul
+ExecStart=/srv/finans-agent/venv/bin/streamlit run app/main.py \
+          --server.address 127.0.0.1 --server.port 8501 --server.headless true \
+          --browser.gatherUsageStats false
+Restart=always
+RestartSec=10
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target
