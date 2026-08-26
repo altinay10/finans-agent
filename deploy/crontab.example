@@ -34,6 +34,12 @@
 40 20   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py participation_rates
 45 20   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py participation_rates_kt
 
+# AGENT: uç noktası olmayan bankaların kredi oranı (Halkbank, QNB,
+# DenizBank, ING). GÜNDE BİR ve MESAİ SAATİNDE — faiz kararları çalışma
+# saatlerinde açıklanıyor, gece çekmenin anlamı yok. LLM_FALLBACK_ENABLED=0
+# ise tek token harcamadan biter.
+0  15   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py loan_rates_llm
+
 # Fon fiyatları akşam yayınlanır (Ak Portföy + Garanti BBVA Portföy)
 0  21   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py funds
 

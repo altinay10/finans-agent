@@ -49,6 +49,11 @@ COLLECTORS = {
     "participation_rates_kt": lambda: __import__(
         "collectors.participation_rates", fromlist=["KuveytTurkAnnualRateCollector"]
     ).KuveytTurkAnnualRateCollector(),
+    # Uç noktası olmayan bankaların kredi oranı — AGENT ile çıkarılır.
+    # LLM kapalıysa tek token harcamadan biter (bkz. loan_rates_llm.py).
+    "loan_rates_llm": lambda: __import__(
+        "collectors.loan_rates_llm", fromlist=["LlmLoanRateCollector"]
+    ).LlmLoanRateCollector(),
 }
 
 

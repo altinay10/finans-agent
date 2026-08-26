@@ -322,3 +322,33 @@ class RateChange(Base):
     new_value: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False)
     changed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     run_id: Mapped[int | None] = mapped_column(ForeignKey("scrape_runs.id"), nullable=True)
+
+
+class SchedulerHeartbeat(Base):
+    """Zamanlayıcı süreci YAŞIYOR MU — panelin tek güvenilir cevabı.
+
+    NEDEN GEREKLİ: panel bugüne kadar yalnızca "veri kaç saat eski"ye
+    bakıyordu ve eski veriyi görünce "zamanlayıcı çalışmıyor gibi" diyordu.
+    "Gibi" kelimesi boşuna değildi — panel bunu BİLMİYORDU. İki bambaşka
+    durum aynı mesajı üretiyordu:
+
+      1. Zamanlayıcı hiç başlatılmamış (Docker'da yalnızca panel servisi
+         ayakta, ya da `docker run` ile tek konteyner çalıştırılmış).
+      2. Zamanlayıcı çalışıyor ama bankalardan veri alamıyor.
+
+    Birincisinde çözüm "süreci başlat", ikincisinde "kaynak arızasına bak".
+    Kullanıcıya yanlış tarafı gösteren bir teşhis, teşhis değildir.
+
+    Tek satırlık tablo (id sabit 1): süreç her turda `last_beat`i tazeler.
+    `host`/`pid` hangi konteynerin sahiplendiğini söyler — iki zamanlayıcının
+    aynı anda koşmasını önlemek de bu satıra bakılarak yapılıyor
+    (bkz. store/heartbeat.py).
+    """
+
+    __tablename__ = "scheduler_heartbeat"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    host: Mapped[str] = mapped_column(String, nullable=False)
+    pid: Mapped[int] = mapped_column(nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_beat: Mapped[datetime] = mapped_column(DateTime, nullable=False)

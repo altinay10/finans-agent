@@ -38,6 +38,7 @@ DATASET_COLLECTORS = {
     # participation_rates*. Üçü de aynı tabloya yazıyor (deposit_rates).
     "deposit_endpoints": ("deposit_rates", "participation_rates", "participation_rates_kt"),
     "loan_endpoints": ("loan_rates",),
+    "loan_llm_endpoints": ("loan_rates_llm",),
     "profit_share_endpoints": ("profit_shares", "profit_shares_kt"),
     "fund_endpoints": ("fund_prices",),
 }

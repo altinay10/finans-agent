@@ -79,6 +79,7 @@ DATASET_LABELS = {
     "fx_endpoints": "Döviz kuru",
     "deposit_endpoints": "Mevduat / katılma hesabı",
     "loan_endpoints": "Kredi oranı",
+    "loan_llm_endpoints": "Kredi oranı (agent)",
     "profit_share_endpoints": "Kâr paylaşım oranı",
     "fund_endpoints": "Fon fiyatı",
 }

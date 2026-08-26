@@ -91,6 +91,8 @@ def extract(
     run_id: int | None = None,
     trigger_error: str | None = None,
     trigger_source: str | None = None,
+    budget: int | None = None,
+    prompt: str | None = None,
 ) -> list[BaseModel]:
     """HTML'den yapılandırılmış kayıt çıkarır ve HER SONUCU kalıcı olarak kaydeder.
 
@@ -112,15 +114,17 @@ def extract(
             "LLM fallback kapalı. Açmak için .env: LLM_FALLBACK_ENABLED=1 "
             "(ve LLM_API_KEY dolu olmalı)."
         )
-    if _calls_made >= settings.LLM_MAX_CALLS_PER_RUN:
+    # `budget` verilmezse onarım fallback'inin dar sınırı geçerlidir.
+    limit = settings.LLM_MAX_CALLS_PER_RUN if budget is None else budget
+    if _calls_made >= limit:
         record_llm_call(
             trigger_error=trigger_error, trigger_source=trigger_source,
             model=settings.LLM_MODEL, status="budget_exceeded", collector=collector,
             run_id=run_id,
-            error=f"koşu başına sınır: {settings.LLM_MAX_CALLS_PER_RUN}",
+            error=f"koşu başına sınır: {limit}",
         )
         raise LlmBudgetExceeded(
-            f"Bu koşuda LLM çağrı sınırına ulaşıldı ({settings.LLM_MAX_CALLS_PER_RUN}). "
+            f"Bu koşuda LLM çağrı sınırına ulaşıldı ({limit}). "
             "Sınır .env'de LLM_MAX_CALLS_PER_RUN ile değiştirilir."
         )
 
@@ -137,7 +141,7 @@ def extract(
                 "type": "json_schema",
                 "json_schema": {"name": "extraction", "schema": wrapper.model_json_schema()},
             },
-            messages=[{"role": "user", "content": PROMPT.format(html=trimmed)}],
+            messages=[{"role": "user", "content": (prompt or PROMPT).format(html=trimmed)}],
             temperature=0,
             max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
         )

@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 
 from store.clock import ISTANBUL
+from store import heartbeat
 from store.db import SessionLocal, init_db
 from store.retention import purge
 
@@ -51,6 +52,10 @@ SCHEDULE: list[tuple[str, int | None, int]] = [
     ("profit_shares_kt", 20, 35),
     ("participation_rates", 20, 40),
     ("participation_rates_kt", 20, 45),
+    # Agent toplayıcısı GÜNDE BİR ve mesai saatinde: faiz kararları
+    # çalışma saatlerinde açıklanıyor, gece çekmenin anlamı yok
+    # (kullanıcı isteği, 2026-08-26).
+    ("loan_rates_llm", 15, 0),
     ("funds", 21, 0),
 ]
 
@@ -70,6 +75,10 @@ MAX_AGE_HOURS: dict[str, float] = {
     "profit_shares_kt": 30,
     "participation_rates": 30,
     "participation_rates_kt": 30,
+    # Agent pahalı: tazelik telafisi 30 saat yerine 30 GÜN. Böylece
+    # "bayat" diye yarım saatte bir yeniden çağrılıp token yakmaz;
+    # planlanan 15:00 koşusu tek yetkilidir.
+    "loan_rates_llm": 24 * 30,
     "funds": 30,
 }
 
@@ -178,6 +187,17 @@ def due_by_staleness(now_utc: datetime | None = None) -> list[str]:
 def main() -> None:
     init_db()
 
+    # Aynı anda İKİ zamanlayıcı koşmamalı: tek konteynerli kurulumda panel
+    # kendi zamanlayıcısını başlatabiliyor, compose'da ayrı bir servis var.
+    # İkisi birden koşarsa bankalar iki kat istek alır.
+    if not heartbeat.claim():
+        state = heartbeat.read() or {}
+        logger.warning(
+            "başka bir zamanlayıcı zaten çalışıyor (host=%s pid=%s) — çıkılıyor",
+            state.get("host"), state.get("pid"),
+        )
+        return
+
     if os.environ.get("RUN_ON_START", "1") not in {"0", "false", "no"}:
         logger.info("açılışta ilk toplama (RUN_ON_START=0 ile kapatılır)")
         for name, _, _ in SCHEDULE:
@@ -197,6 +217,10 @@ def main() -> None:
     next_purge = datetime.now(timezone.utc)
 
     while True:
+        # Nabız HER TURDA atılır. Panel bu satıra bakarak "zamanlayıcı
+        # çalışmıyor gibi" yerine "çalışmıyor" ya da "çalışıyor" diyebiliyor.
+        heartbeat.beat()
+
         now = datetime.now(ISTANBUL)
         now_utc = datetime.now(timezone.utc)
 

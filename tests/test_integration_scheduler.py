@@ -161,4 +161,15 @@ def test_panel_warns_when_all_data_is_stale(db):
     assert main._age_hours(None, now) is None
     # Sınır, en cömert toplayıcı sınırının üstünde olmalı ki normal hafta
     # sonu bayatlaması uyarı üretmesin.
-    assert main.NO_COLLECTOR_WARNING_HOURS > max(scheduler.MAX_AGE_HOURS.values())
+    #
+    # AGENT toplayıcısı bu kıyasın DIŞINDA: LLM çağrısı pahalı olduğu için
+    # tazelik telafisi bilerek 30 güne çekildi. Onu da hesaba katmak, panelin
+    # "her şey bayat" uyarısını 30 günden önce hiç göstermemesi demek olurdu
+    # — oysa o uyarı sık koşan toplayıcılar için var.
+    sik_kosanlar = {
+        k: v for k, v in scheduler.MAX_AGE_HOURS.items() if not k.endswith("_llm")
+    }
+    assert main.NO_COLLECTOR_WARNING_HOURS > max(sik_kosanlar.values())
+    assert scheduler.MAX_AGE_HOURS["loan_rates_llm"] > 24 * 7, (
+        "agent toplayıcısı tazelik telafisiyle sık sık çağrılmamalı — token yakar"
+    )

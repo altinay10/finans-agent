@@ -195,6 +195,21 @@ Tasarım dokümanındaki (`§01`) yapının birebir karşılığı — `collecto
 
 ## Docker ile dağıtım (önerilen)
 
+### Tek konteyner (en basit)
+
+```bash
+docker run -d -p 8501:8501 -v finans-data:/app/data finans-agent
+```
+
+Varsayılan `ROLE=all`: **panel VE zamanlayıcı birlikte kalkar.** Eskiden imaj
+doğrudan Streamlit'i çalıştırıyordu; `docker run` diyen kullanıcı yalnızca
+paneli ayağa kaldırıp hiç veri toplamıyor ve site günlerce eskiyen veri
+gösteriyordu — sunucuda en sık yaşanan arıza buydu (bkz. `run.py`).
+
+`ROLE` değerleri: `all` (varsayılan) · `panel` · `scheduler`.
+
+### Compose (panel ve zamanlayıcı ayrı servis)
+
 ```bash
 docker compose up -d      # panel: http://127.0.0.1:8501
 ```
@@ -202,9 +217,14 @@ docker compose up -d      # panel: http://127.0.0.1:8501
 `.env` **gerekmez** — tüm ayarların varsayılanı var. LLM fallback'i açmak ya
 da kayıt saklama sürelerini değiştirmek istersen `cp .env.example .env`.
 
-İki servis kalkar:
+İki servis kalkar (panel `ROLE=panel` ile çalışır, çünkü zamanlayıcı ayrı
+bir servistir; yanlışlıkla iki zamanlayıcı başlatılsa bile
+`store/heartbeat.py`'deki kilit ikincisini kapatır):
 
 - **panel** — Streamlit arayüzü, root olmayan kullanıcı, healthcheck'li.
+  Üstte **zamanlayıcının nabzını** gösterir: "🟢 çalışıyor — son nabız 9 sn
+  önce" ya da durmuşsa ne yapılacağını söyleyen açık bir hata. Panel artık
+  "çalışmıyor **gibi**" demiyor; ölçüyor.
 - **scheduler** — `scheduler.py`, toplayıcıları planına göre tetikler; **cron
   kurmaya gerek yok**. Açılışta bir kez hepsini toplar (`RUN_ON_START=0` ile
   kapatılır), böylece panel ilk açılışta boş gelmez.

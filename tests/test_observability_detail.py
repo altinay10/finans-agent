@@ -606,3 +606,94 @@ def test_persistent_network_error_still_raises_after_the_retry(db, monkeypatch):
     with SessionLocal() as s:
         rows = s.execute(select(HttpRequest)).scalars().all()
     assert [r.attempt for r in rows] == [1, 2]
+
+
+# --------------------------------------------------- zamanlayıcı nabzı ----
+
+def test_panel_can_tell_a_stopped_scheduler_from_a_broken_source(db):
+    """Panelin "çalışmıyor GİBİ" demesinin sebebi buydu: bilmiyordu.
+
+    İki bambaşka arıza aynı mesajı üretiyordu — süreç hiç yok / süreç var
+    ama kaynaklar düşmüş. Birincisinde çözüm "süreci başlat", ikincisinde
+    "kaynak arızasına bak". Yanlış tarafı gösteren teşhis, teşhis değildir.
+    """
+    from store import heartbeat
+
+    assert heartbeat.read() is None          # hiç çalışmamış
+    assert heartbeat.is_alive() is False
+
+    heartbeat.beat()
+    state = heartbeat.read()
+    assert state["alive"] is True
+    assert state["age_seconds"] < 5
+
+
+def test_a_stale_heartbeat_counts_as_dead(db, monkeypatch):
+    """Süreç çökerse nabız donar; panel bunu "durmuş" diye okumalı."""
+    from datetime import timedelta
+
+    from sqlalchemy import select as _select
+
+    from store import heartbeat
+    from store.models import SchedulerHeartbeat
+
+    heartbeat.beat()
+    with SessionLocal() as s:
+        row = s.execute(_select(SchedulerHeartbeat)).scalars().one()
+        row.last_beat = row.last_beat - timedelta(hours=3)
+        s.commit()
+
+    state = heartbeat.read()
+    assert state["alive"] is False
+    assert state["age_seconds"] > heartbeat.STALE_AFTER_SECONDS
+
+
+def test_second_scheduler_refuses_to_start_while_one_is_alive(db, monkeypatch):
+    """İKİ zamanlayıcı aynı anda koşarsa bankalar iki kat istek alır.
+
+    Tek konteynerli kurulumda `run.py` bir zamanlayıcı başlatıyor,
+    compose'da ayrı bir servis var. Kilit bu çakışmayı çözer.
+    """
+    import os
+
+    from store import heartbeat
+
+    assert heartbeat.claim() is True          # ilk süreç sahiplenir
+
+    # Başka bir süreç gibi davran: nabız canlı ama pid farklı.
+    # (Gerçek pid ÖNCE yakalanmalı; lambda içinde os.getpid() çağırmak
+    # yamanmış fonksiyonun kendisini çağırıp sonsuz özyineleme yapar.)
+    baska_pid = os.getpid() + 1
+    monkeypatch.setattr(os, "getpid", lambda: baska_pid)
+    assert heartbeat.claim() is False
+
+
+def test_claim_succeeds_when_the_previous_owner_is_stale(db, monkeypatch):
+    """Konteyner yeniden başlarsa yeni süreç devralabilmeli."""
+    from datetime import timedelta
+
+    from sqlalchemy import select as _select
+
+    from store import heartbeat
+    from store.models import SchedulerHeartbeat
+
+    heartbeat.beat()
+    with SessionLocal() as s:
+        row = s.execute(_select(SchedulerHeartbeat)).scalars().one()
+        row.pid = 999999
+        row.last_beat = row.last_beat - timedelta(hours=2)
+        s.commit()
+
+    assert heartbeat.claim() is True
+
+
+def test_heartbeat_failure_never_breaks_collection(db, monkeypatch):
+    """Nabız yazamamak toplamayı durdurmamalı (gözlem katmanı ilkesi)."""
+    import store.heartbeat as hb
+
+    def boom():
+        raise RuntimeError("veritabanı kilitli")
+
+    monkeypatch.setattr(hb, "SessionLocal", boom)
+    hb.beat()                    # patlamamalı
+    assert hb.read() is None     # okuma da sessizce None döner

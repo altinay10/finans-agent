@@ -50,6 +50,13 @@ LLM_MAX_OUTPUT_TOKENS = _int("LLM_MAX_OUTPUT_TOKENS", 2_000)
 # her koşuda bir kez denenir, sonra susar.
 LLM_MAX_CALLS_PER_RUN = _int("LLM_MAX_CALLS_PER_RUN", 1)
 
+# AGENT toplayıcısı (collectors/loan_rates_llm.py) için AYRI ve daha yüksek
+# sınır. Onarım fallback'i nadir bir kurtarma yolu olduğu için 1 çağrıyla
+# sınırlı; agent toplayıcısı ise BANKA BAŞINA bir çağrı yapar ve tek çağrıyla
+# işini bitiremez. İkisini aynı sayaca bağlamak, agent'ı ilk bankadan sonra
+# susturur ve sessizce eksik veri üretirdi.
+LLM_AGENT_MAX_CALLS_PER_RUN = _int("LLM_AGENT_MAX_CALLS_PER_RUN", 8)
+
 # İstek zaman aşımı — asılı kalan bir çağrı hem koşuyu hem faturayı bekletir.
 LLM_TIMEOUT_SECONDS = _int("LLM_TIMEOUT_SECONDS", 45)
 

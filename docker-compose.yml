@@ -48,6 +48,11 @@ services:
     build: .
     image: finans-agent:latest
     container_name: finans-panel
+    # Ayrı bir scheduler servisi olduğu için panel yalnızca paneldir.
+    # Tek konteynerli kurulumda (compose'suz) ROLE varsayılanı 'all'dır.
+    environment:
+      <<: *env
+      ROLE: panel
     ports:
       # Sadece localhost'a bağlanır. Dışarı açmak istersen "8501:8501" yap
       # ve ÖNÜNE bir reverse proxy + kimlik doğrulama koy — bu panelde
@@ -55,7 +60,6 @@ services:
       - "127.0.0.1:8501:8501"
     volumes:
       - finans-data:/app/data
-    environment: *env
     restart: unless-stopped
 
   # Sürekli çalışıp toplayıcıları zamanında tetikler (cron'a gerek yok).
@@ -68,8 +72,9 @@ services:
     environment: *env
     entrypoint: ["python", "-u", "scheduler.py"]
     restart: unless-stopped
-    depends_on:
-      - panel
+    # `depends_on: panel` KALDIRILDI: toplama panelin ayakta olmasına
+    # bağlı değil. Panel sağlıksızsa zamanlayıcının da beklemesi, veriyi
+    # tamamen alakasız bir sebeple durdururdu.
 
   # Elle çalıştırma: docker compose run --rm worker all
   worker:

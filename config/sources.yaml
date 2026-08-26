@@ -450,6 +450,107 @@ loan_endpoints:
     blocked_reason: "Kur uç noktasında TLS el sıkışması tamamlanmıyor; kredi tarafı hiç denenmedi."
 
 # ---------------------------------------------------------------------------
+# AGENT ile kredi oranı — collectors/loan_rates_llm.py
+#
+# Bu bankalarda kullanılabilir bir uç nokta YOK; oran pazarlama sayfasında
+# düz metin olarak yazıyor. Dört ayrı kırılgan parser yazmak yerine LLM ile
+# çıkarılıyor. Modelin döndürdüğü her oran, sayfanın metninde GERÇEKTEN
+# geçmek zorunda (zeminleme kontrolü) — uydurma bir oran veritabanına
+# giremez.
+#
+# Erişilebilirlik 2026-08-26'da canlı doğrulandı; parantez içindekiler o gün
+# sayfada görülen örnek oranlardır (kanıt amaçlı, koda gömülü DEĞİL).
+#
+# AGENT KAPALIYSA bu toplayıcı tek token harcamadan biter
+# (.env: LLM_FALLBACK_ENABLED=1 + LLM_API_KEY gerekir).
+# ---------------------------------------------------------------------------
+loan_llm_endpoints:
+  halkbank:
+    url: "https://www.halkbank.com.tr/tr/bireysel/krediler/ihtiyac-kredileri/Avantajli-ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: HALKBANK
+    last_verified: 2026-08-26
+    note: "Sayfa 200; metinde aylık oran geçiyor (ör. %4,19)."
+
+  qnb:
+    url: "https://www.qnb.com.tr/bireysel-ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: QNB
+    last_verified: 2026-08-26
+    note: >
+      Sayfa 200; hem aylık faiz (ör. %2,84 / %3,19) hem yıllık maliyet oranı
+      (%68,64 / %71,24) yazıyor. Prompt açıkça "yıllık maliyet oranını ALMA"
+      diyor; zeminleme kontrolü de yıllık oranın aylık sanılmasını
+      yakalayamaz (o sayı da sayfada geçer), asıl koruma bant kontrolü:
+      %20 üzeri aylık oran reddedilir.
+
+  denizbank:
+    url: "https://www.denizbank.com/krediler/bireysel-bankacilik/ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: DENIZBANK
+    last_verified: 2026-08-26
+    note: "Sayfa 200; metinde aylık oran geçiyor (ör. %2,99)."
+
+  ing:
+    url: "https://www.ing.com.tr/tr/ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: ING
+    last_verified: 2026-08-26
+    note: "Sayfa 200; metinde birden fazla kampanya oranı geçiyor (ör. %1,69 / %2,99 / %3,48)."
+
+  teb:
+    url: "https://www.teb.com.tr/ihtiyac-kredileri/"
+    type: llm_html
+    auth: none
+    status: unverified
+    institution: TEB
+    last_verified: 2026-08-26
+    blocked_reason: >
+      Sayfa 200 ve erişilebilir ama düz metinde oran GÖRÜNMÜYOR (JS ile
+      geliyor olabilir). Modele oransız bir sayfa göndermek token yakmaktır;
+      oranın nerede yayınlandığı bulunana kadar kapalı.
+
+  garantibbva:
+    url: "https://www.garantibbva.com.tr/krediler/bireysel-ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: unverified
+    institution: GARANTIBBVA
+    last_verified: 2026-08-26
+    blocked_reason: "Sayfa 200 ama düz metinde oran yok — TEB ile aynı durum."
+
+  isbank:
+    url: "https://www.isbank.com.tr/ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: blocked
+    institution: ISBANK
+    last_verified: 2026-08-26
+    blocked_reason: >
+      Sayfa HTTP 200 dönüyor ama içerik WAF engel sayfası ("İstek
+      Engellenmiştir"). Bu robots.txt gibi bir nezaket kuralı DEĞİL, aktif
+      bot tespiti; aşmak parmak izi taklidi gerektirir. Kullanıcının
+      robots.txt kararı bunu kapsamıyor. Toplayıcı bu sayfayı modele
+      GÖNDERMEZ — engel sayfası tespit edilip istek düşürülür.
+
+  ziraat:
+    status: unverified
+    institution: ZIRAAT
+    last_verified: 2026-08-26
+    blocked_reason: >
+      Kredi ürün sayfalarının doğru adresi bulunamadı (denenen yollar 404).
+      Ana sayfada yalnızca başvuru formu bağlantıları var. Engel yok,
+      araştırma yarım.
+
+# ---------------------------------------------------------------------------
 # Katılım bankası KÂR PAYLAŞIM oranları — collectors/profit_shares.py
 #
 # DİKKAT: buradaki sayılar yıllık getiri DEĞİL, bankanın elde ettiği kârın

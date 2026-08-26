@@ -35,8 +35,9 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:8501/_stcore/health || exit 1
 
-CMD ["streamlit", "run", "app/main.py", \
-     "--server.address", "0.0.0.0", \
-     "--server.port", "8501", \
-     "--server.headless", "true", \
-     "--browser.gatherUsageStats", "false"]
+# ROLE varsayılanı "all": tek konteyner çalıştırıldığında ZAMANLAYICI DA
+# kalkar. Eskiden CMD doğrudan streamlit'ti ve `docker run imaj` diyen
+# kullanıcı yalnızca paneli ayağa kaldırıp hiç veri toplamıyordu — sunucuda
+# en sık yaşanan arıza buydu. Bkz. run.py.
+ENV ROLE=all
+CMD ["python", "run.py"]
