@@ -697,3 +697,55 @@ def test_heartbeat_failure_never_breaks_collection(db, monkeypatch):
     monkeypatch.setattr(hb, "SessionLocal", boom)
     hb.beat()                    # patlamamalı
     assert hb.read() is None     # okuma da sessizce None döner
+
+
+def test_dead_owner_does_not_lock_out_a_new_scheduler(db, monkeypatch):
+    """ÖLÜ SAHİP TUZAĞI — canlıda yakalandı (2026-08-26).
+
+    Zamanlayıcı çökerse ya da konteyner yeniden başlarsa nabzı 3 dakika daha
+    "canlı" görünür. O aralıkta başlayan yeni zamanlayıcı kendini kapatıyor
+    ve panel toplayıcısız kalıyordu — tam da çözmeye çalıştığımız arıza.
+    Aynı makinedeki bir nabızda pid'in gerçekten yaşadığı sınanmalı.
+    """
+    import os
+    import socket
+
+    from sqlalchemy import select as _select
+
+    from store import heartbeat
+    from store.models import SchedulerHeartbeat
+
+    heartbeat.beat()
+    with SessionLocal() as s:
+        row = s.execute(_select(SchedulerHeartbeat)).scalars().one()
+        row.pid = 999_999            # bu makinede var olmayan pid
+        row.host = socket.gethostname()
+        s.commit()
+
+    state = heartbeat.read()
+    assert state["alive"] is True     # zamana göre hâlâ taze
+    assert heartbeat.claim() is True  # ama sahip ölü -> devralınır
+
+    with SessionLocal() as s:
+        assert s.execute(_select(SchedulerHeartbeat)).scalars().one().pid == os.getpid()
+
+
+def test_a_live_owner_on_another_host_still_blocks(db, monkeypatch):
+    """Farklı konteynerden gelen nabızda pid kontrolü anlamsızdır.
+
+    Oradaki pid bizim makinemizde başka bir sürece ait olabilir; tek
+    güvenilir ölçüt zaman aşımıdır.
+    """
+    from sqlalchemy import select as _select
+
+    from store import heartbeat
+    from store.models import SchedulerHeartbeat
+
+    heartbeat.beat()
+    with SessionLocal() as s:
+        row = s.execute(_select(SchedulerHeartbeat)).scalars().one()
+        row.pid = 999_999
+        row.host = "baska-konteyner"
+        s.commit()
+
+    assert heartbeat.claim() is False

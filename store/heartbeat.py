@@ -85,16 +85,45 @@ def is_alive() -> bool:
     return bool(state and state["alive"])
 
 
+def _pid_running(pid: int) -> bool:
+    """Bu makinede bu pid gerçekten yaşıyor mu?"""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True          # süreç var ama bize ait değil
+    except OSError:
+        return True          # emin olamıyorsak yaşıyor say (temkinli)
+    return True
+
+
 def claim() -> bool:
-    """Zamanlayıcı rolünü sahiplen. Başkası canlıysa False döner.
+    """Zamanlayıcı rolünü sahiplen. Başkası GERÇEKTEN canlıysa False döner.
 
     Yarış durumu: panel ve ayrı scheduler servisi aynı anda kalkarsa ikisi de
     "nabız yok" görebilir. Bu yüzden sahiplenme, nabzı YAZIP hemen geri
     okuyarak doğrulanır — son yazan kazanır, diğeri çekilir.
+
+    ÖLÜ SAHİP TUZAĞI (canlıda yakalandı, 2026-08-26): bir zamanlayıcı
+    çökerse ya da konteyner yeniden başlarsa nabzı 3 dakika daha "canlı"
+    görünür. O aralıkta başlayan YENİ zamanlayıcı kendini kapatıyordu ve
+    `run.py` çocuğu yeniden denemediği için panel toplayıcısız kalıyordu —
+    tam da çözmeye çalıştığımız arıza. Bu yüzden nabız AYNI MAKİNEDEN
+    geliyorsa pid'in gerçekten yaşadığı ayrıca sınanıyor; ölmüşse kilit
+    anında devralınır.
+
+    Farklı bir host'tan (ör. ayrı konteyner) gelen nabızda pid kontrolü
+    anlamsızdır; orada zaman aşımı tek ölçüttür.
     """
     state = read()
     if state and state["alive"] and state["pid"] != os.getpid():
-        return False
+        ayni_makine = state["host"] == socket.gethostname()
+        if not ayni_makine or _pid_running(state["pid"]):
+            return False
+        logger.warning(
+            "önceki zamanlayıcı (pid %s) ölmüş — kilit devralınıyor", state["pid"]
+        )
     beat()
     after = read()
     return bool(after and after["pid"] == os.getpid())
