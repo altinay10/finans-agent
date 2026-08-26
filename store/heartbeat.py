@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import threading
 from datetime import timedelta
 
 from store.clock import utc_now
@@ -127,3 +128,29 @@ def claim() -> bool:
     beat()
     after = read()
     return bool(after and after["pid"] == os.getpid())
+
+
+BEAT_INTERVAL_SECONDS = 30
+
+
+def start_beating() -> threading.Thread:
+    """Nabzı ARKA PLAN İŞ PARÇACIĞINDAN at.
+
+    NEDEN: nabız zamanlayıcının ana döngüsünden atılıyordu ve döngü,
+    toplama sırasında BLOKLANIYOR. Açılış turunda dokuz toplayıcı sırayla
+    koşuyor (VakıfBank mevduat matrisi tek başına ~60 sn); bu sürede hiç
+    nabız atılmıyor ve panel çalışan bir zamanlayıcıya "DURMUŞ" diyor —
+    hem de en kritik anda, ilk kurulumda.
+
+    Nabız "döngü dönüyor mu"yu değil "SÜREÇ YAŞIYOR MU"yu ölçmeli; doğru
+    yeri bu yüzden ayrı bir iş parçacığı.
+    """
+    def _loop() -> None:
+        while True:
+            beat()
+            _stop.wait(BEAT_INTERVAL_SECONDS)
+
+    _stop = threading.Event()
+    thread = threading.Thread(target=_loop, name="heartbeat", daemon=True)
+    thread.start()
+    return thread

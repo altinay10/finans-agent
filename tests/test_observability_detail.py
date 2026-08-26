@@ -749,3 +749,22 @@ def test_a_live_owner_on_another_host_still_blocks(db, monkeypatch):
         s.commit()
 
     assert heartbeat.claim() is False
+
+
+def test_heartbeat_thread_beats_independently_of_the_collection_loop(db):
+    """Nabız "döngü dönüyor mu"yu değil "SÜREÇ YAŞIYOR MU"yu ölçmeli.
+
+    Toplama turu ana döngüyü dakikalarca bloklar; nabız ona bağlı olsaydı
+    panel çalışan bir zamanlayıcıyı "durmuş" sanardı — hem de ilk kurulumda,
+    dokuz toplayıcının sırayla koştuğu en kritik anda.
+    """
+    import time as _time
+
+    from store import heartbeat
+
+    heartbeat.BEAT_INTERVAL_SECONDS = 0.05
+    heartbeat.start_beating()
+    _time.sleep(0.2)                      # "toplama" sürüyormuş gibi bekle
+    state = heartbeat.read()
+    assert state is not None
+    assert state["age_seconds"] < 0.2     # ana döngü bloklu olsa da taze

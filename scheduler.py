@@ -198,6 +198,11 @@ def main() -> None:
         )
         return
 
+    # Nabız arka planda atılır: toplama turları ana döngüyü dakikalarca
+    # bloklar ve nabız ona bağlı olsaydı panel çalışan bir zamanlayıcıyı
+    # "durmuş" sanardı (bkz. store/heartbeat.start_beating).
+    heartbeat.start_beating()
+
     if os.environ.get("RUN_ON_START", "1") not in {"0", "false", "no"}:
         logger.info("açılışta ilk toplama (RUN_ON_START=0 ile kapatılır)")
         for name, _, _ in SCHEDULE:
@@ -217,10 +222,6 @@ def main() -> None:
     next_purge = datetime.now(timezone.utc)
 
     while True:
-        # Nabız HER TURDA atılır. Panel bu satıra bakarak "zamanlayıcı
-        # çalışmıyor gibi" yerine "çalışmıyor" ya da "çalışıyor" diyebiliyor.
-        heartbeat.beat()
-
         now = datetime.now(ISTANBUL)
         now_utc = datetime.now(timezone.utc)
 
