@@ -137,6 +137,17 @@ def _db_name(key: str) -> str:
     return COLLECTORS[key]().name
 
 
+def max_age_by_db_name() -> dict[str, float]:
+    """Tazelik sınırları, `scrape_runs.collector` adlarıyla anahtarlanmış.
+
+    Panel scrape_runs'ı okur, worker anahtarlarını değil (bkz. _db_name).
+    Eşlemeyi panelde ikinci kez yazmak, MAX_AGE_HOURS değiştiğinde sessizce
+    kayan bir kopya üretirdi: panel "bayat" derken zamanlayıcı hiçbir şey
+    yapmazdı.
+    """
+    return {_db_name(key): hours for key, hours in MAX_AGE_HOURS.items()}
+
+
 def last_success_ages(now_utc: datetime | None = None) -> dict[str, float | None]:
     """Toplayıcı -> son BAŞARILI koşusunun kaç saat önce olduğu (None = hiç).
 

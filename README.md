@@ -57,7 +57,10 @@ Veriyi tazeleyen ayrı bir süreçtir. Üç seçenekten **biri** kurulmalı:
 | **cron** | `deploy/crontab.example` (scheduler servisiyle aynı anda kurma, iki kez çalışır) |
 
 Hiçbiri kurulmazsa panel ilk günden sonra bayat veri gösterir — ve bunu
-fark etmen için üstteki tazelik şeridi kırmızı bir uyarı basar.
+fark etmen için üstteki tazelik şeridi kırmızı bir uyarı basar. Uyarı iki
+ayrı arızayı KARIŞTIRMAZ: "zamanlayıcı süreci yok" (nabza bakar,
+`store/heartbeat.py`) ile "süreç var ama kaynaklar düşmüş" farklı mesajlar
+üretir, çünkü ikisinde yapılacak şey farklıdır.
 
 Elle tek seferlik toplama:
 
@@ -97,7 +100,7 @@ unutulacağı varsayımıyla:
 
 | Katman | Nerede | Ne cevaplar |
 |---|---|---|
-| **Koşu** | `scrape_runs` tablosu + üstteki tazelik şeridi | "Toplayıcı çalıştı mı, kaç satır yazdı?" |
+| **Koşu** | `scrape_runs` tablosu + üstteki tazelik şeridi | "Toplayıcı çalıştı mı, kaç satır yazdı?" Şerit sekme adlarıyla dört rozet gösterir (rengi grubun **en kötü** üyesi belirler); toplayıcı toplayıcı yaş/sınır tablosu altındaki açılır bölümde |
 | **Kaynak** | `source_runs` tablosu + **Kayıtlar** sekmesi | "**A bankası başarılı, B bankası başarısız**" — banka banka, aşama aşama (fetch/parse), süre ve hata metniyle |
 | **LLM** | `llm_calls` tablosu + Kayıtlar sekmesi | "Agent devreye girdi mi, **kaç token harcadı**?" Girdi/çıktı/toplam token, kurtarılan satır, süre |
 

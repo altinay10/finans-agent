@@ -142,34 +142,31 @@ def test_llm_fallback_run_counts_as_fresh(db):
 # ------------------------------------------- "kimse toplamıyor" uyarısı ----
 
 
-def test_panel_warns_when_all_data_is_stale(db):
-    """Sunucuda en sinsi hata: veri sessizce bayatlar ve kimse fark etmez.
+def test_panel_and_scheduler_share_one_staleness_limit(db):
+    """Panelin "bayat" eşiği ile zamanlayıcının "yeniden dene" eşiği AYNI olmalı.
 
-    Panel, her şey eskiyse bunu "banka değişti" değil "toplayıcı koşmuyor"
-    diye yorumlayıp açıkça söylemeli.
+    İki ayrı sabit tutulsaydı panel kırmızı gösterirken zamanlayıcı hiçbir
+    şey yapmaz, kullanıcı da düzelmeyen bir uyarıya bakardı. Panel bu yüzden
+    sabit bir saat sayısı değil, scheduler.MAX_AGE_HOURS'u okuyor — ama
+    scrape_runs'taki ADLARLA (worker anahtarı değil, bkz. _db_name).
     """
-    from datetime import datetime as _dt, timezone as _tz
+    from app.panels.status import GROUPS
 
-    import app.main as main
+    limits = scheduler.max_age_by_db_name()
+    assert set(limits.values()) == set(scheduler.MAX_AGE_HOURS.values())
 
-    now = _dt.now(_tz.utc)
-    fresh = (now - timedelta(hours=1)).isoformat()
-    stale = (now - timedelta(hours=200)).isoformat()
+    # Panelin gruplarındaki her toplayıcının bir sınırı OLMALI: sınırsız
+    # kalan bir toplayıcı hiç "bayat" sayılmaz ve sessizce eskir.
+    gruplananlar = {name for _, members in GROUPS for name in members}
+    assert gruplananlar <= set(limits), (
+        f"panelde sınırsız toplayıcı var: {gruplananlar - set(limits)}"
+    )
+    # Tersi de: plandaki her toplayıcı panelde bir gruba düşmeli, yoksa
+    # arızası üst şeritte hiç görünmez.
+    assert set(limits) <= gruplananlar, (
+        f"panelde gösterilmeyen toplayıcı var: {set(limits) - gruplananlar}"
+    )
 
-    assert main._age_hours(fresh, now) == pytest.approx(1, abs=0.1)
-    assert main._age_hours(stale, now) == pytest.approx(200, abs=0.1)
-    assert main._age_hours(None, now) is None
-    # Sınır, en cömert toplayıcı sınırının üstünde olmalı ki normal hafta
-    # sonu bayatlaması uyarı üretmesin.
-    #
-    # AGENT toplayıcısı bu kıyasın DIŞINDA: LLM çağrısı pahalı olduğu için
-    # tazelik telafisi bilerek 30 güne çekildi. Onu da hesaba katmak, panelin
-    # "her şey bayat" uyarısını 30 günden önce hiç göstermemesi demek olurdu
-    # — oysa o uyarı sık koşan toplayıcılar için var.
-    sik_kosanlar = {
-        k: v for k, v in scheduler.MAX_AGE_HOURS.items() if not k.endswith("_llm")
-    }
-    assert main.NO_COLLECTOR_WARNING_HOURS > max(sik_kosanlar.values())
     assert scheduler.MAX_AGE_HOURS["loan_rates_llm"] > 24 * 7, (
         "agent toplayıcısı tazelik telafisiyle sık sık çağrılmamalı — token yakar"
     )
