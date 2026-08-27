@@ -67,7 +67,7 @@ GROUPS: list[tuple[str, tuple[str, ...]]] = [
 # bir grubun rengi, üyelerinin en yüksek indeksli durumudur.
 STATES: list[tuple[str, str, str]] = [
     ("fresh", "#16a34a", "taze"),
-    ("off", "#9ca3af", "kapalı"),
+    ("off", "#9ca3af", "agent kapalı"),
     ("late", "#d97706", "gecikti"),
     ("stale", "#dc2626", "bayat"),
     ("never", "#dc2626", "hiç başarılı olmadı"),
@@ -75,6 +75,25 @@ STATES: list[tuple[str, str, str]] = [
 STATE_ORDER = {name: i for i, (name, _, _) in enumerate(STATES)}
 STATE_COLOR = {name: color for name, color, _ in STATES}
 STATE_LABEL = {name: label for name, _, label in STATES}
+
+# Durum sütununun sözlüğü. Bir renk adı ("kapalı") tek başına ne arızayı ne
+# de tercihi anlatıyor: kullanıcının bilmesi gereken şey her durumda NE
+# YAPACAĞI. "agent kapalı" özellikle önemli — anahtarsız kurulumda kalıcı
+# olarak görünüyor ve düzeltilecek bir bozukluk sanılırsa kullanıcı olmayan
+# bir arızayı kovalar.
+LEGEND = (
+    "**Durum**\n"
+    "- 🟢 **taze** — yaş sınırın altında\n"
+    "- 🟡 **gecikti** — sınırı aştı; bir koşu kaçmış olabilir\n"
+    "- 🔴 **bayat** — sınırın iki katını aştı; kaynak muhtemelen kırık\n"
+    "- 🔴 **hiç başarılı olmadı** — 7 gündür tek bir başarılı koşu yok\n"
+    "- ⚪ **agent kapalı** — LLM anahtarı tanımlı değil, bu toplayıcı hiç "
+    "çağrılmıyor. **Arıza değil, varsayılan davranış**; açmak için `.env` "
+    "içine `LLM_API_KEY` ve `LLM_FALLBACK_ENABLED=1`.\n\n"
+    "**Sınır**, zamanlayıcının o kaynağı yeniden denemek için beklediği süre "
+    "(`scheduler.MAX_AGE_HOURS`). Agent toplayıcısınınki bilerek 30 gün: "
+    "her çağrı token harcıyor."
+)
 
 
 @st.cache_data(ttl=120)
@@ -194,6 +213,18 @@ def format_age(hours: float | None) -> str:
     return f"{hours / 24:.0f} gün"
 
 
+def format_ago(hours: float | None) -> str:
+    """"... önce" cümlesine giren biçim.
+
+    `format_age` rozet için var ve döndürdüğü "az önce" zaten kendi başına
+    bir zarf; sonuna bir "önce" daha eklemek "az önce önce" üretiyordu.
+    """
+    metin = format_age(hours)
+    if hours is None or metin.endswith("önce"):
+        return metin
+    return f"{metin} önce"
+
+
 def _worst(states: list[str]) -> str:
     return max(states, key=lambda s: STATE_ORDER.get(s, 0)) if states else "never"
 
@@ -221,7 +252,7 @@ def _render_chips(rows: list[dict]) -> None:
         ages = [r["age_hours"] for r in members if r["age_hours"] is not None]
         # Yaşı olmayan grupta rozete uzun durum adı değil kısa bir ifade
         # giriyor: "hiç başarılı olmadı" rozeti satırın yarısı kadar yapardı.
-        age_text = format_age(max(ages)) if ages else ("kapalı" if state == "off" else "veri yok")
+        age_text = format_age(max(ages)) if ages else (STATE_LABEL["off"] if state == "off" else "veri yok")
         detail = " · ".join(
             f"{r['collector']}: {format_age(r['age_hours'])}"
             f" / sınır {format_age(r['limit_hours'])}"
@@ -270,9 +301,9 @@ def _render_verdict(rows: list[dict], beat: dict | None, now: datetime) -> None:
     else:
         zamanlayici = "zamanlayıcı hiç çalışmamış"
 
-    son = f"son toplama {format_age(min(stamps))} önce" if stamps else "hiç toplama yok"
+    son = f"son toplama {format_ago(min(stamps))}" if stamps else "hiç toplama yok"
     kapali = len(rows) - len(sayilan)
-    kapali_not = f" · {kapali} kaynak kapalı" if kapali else ""
+    kapali_not = f" · {kapali} agent kapalı" if kapali else ""
     # Emoji YOK: rengi rozetler taşıyor. Gri altyazıya bir de renkli daire
     # koymak, aynı bilgiyi iki kez söyleyip satırı gürültülü yapıyordu.
     st.caption(
@@ -340,18 +371,13 @@ def _render_detail(rows: list[dict], now: datetime) -> None:
             hide_index=True,
             height=(len(rows) + 1) * 35 + 3,
         )
-        st.caption(
-            "**Sınır**, zamanlayıcının o kaynağı yeniden denemek için beklediği "
-            "süre (`scheduler.MAX_AGE_HOURS`). Yaş sınırı aşarsa *gecikti*, "
-            "iki katını aşarsa *bayat* sayılır. Agent toplayıcısının sınırı "
-            "bilerek 30 gün: her çağrı token harcıyor."
-        )
+        st.caption(LEGEND)
         if emekli:
             st.caption(
                 "**Emekli toplayıcılar** — kayıt defterinde yok, artık koşmuyor; "
                 "geçmiş kayıtları veritabanında duruyor: "
                 + ", ".join(
-                    f"`{r['collector']}` (son başarı {format_age(r['age_hours'])} önce)"
+                    f"`{r['collector']}` (son başarı {format_ago(r['age_hours'])})"
                     for r in emekli
                 )
             )

@@ -208,3 +208,40 @@ def test_missing_heartbeat_explains_how_to_start_a_collector_at_all(monkeypatch)
     (mesaj,) = _alarm(monkeypatch, rows, None)
     assert "hiç çalışmamış" in mesaj
     assert "python worker.py all" in mesaj
+
+
+# ---------------------------------------------------------- durum sözlüğü ----
+
+def test_every_status_is_explained_in_the_legend():
+    """Bir renk adı tek başına ne arızayı ne tercihi anlatıyor.
+
+    Yeni bir durum eklenip sözlükte anlatılmadan kalırsa kullanıcı tabloda
+    açıklaması olmayan bir kelime görür — "kapalı" tam olarak böyleydi.
+    """
+    for etiket in status.STATE_LABEL.values():
+        assert etiket in status.LEGEND, f"'{etiket}' durumu sözlükte anlatılmamış"
+
+
+def test_disabled_agent_is_named_not_just_greyed():
+    """"kapalı" belirsizdi: neyin kapalı olduğunu söylemiyordu.
+
+    Anahtarsız kurulumda bu satır KALICI olarak görünüyor; düzeltilecek bir
+    bozukluk sanılırsa kullanıcı olmayan bir arızayı kovalar. Bu yüzden hem
+    adı hem de açılış yolu yazılı.
+    """
+    assert status.STATE_LABEL["off"] == "agent kapalı"
+    assert "LLM_API_KEY" in status.LEGEND
+    assert "LLM_FALLBACK_ENABLED=1" in status.LEGEND
+    assert "arıza değil" in status.LEGEND.lower()
+
+
+def test_legend_stays_short_enough_to_read():
+    """Açıklama tablodan uzun olursa kimse okumaz."""
+    assert len(status.LEGEND) < 800
+
+
+def test_ago_phrasing_does_not_stutter():
+    """"az önce" zaten bir zarf: cümleye ikinci bir "önce" eklenmemeli."""
+    assert status.format_ago(0.005) == "az önce"
+    assert status.format_ago(2.25) == "2,2 sa önce"
+    assert status.format_ago(None) == "—"
