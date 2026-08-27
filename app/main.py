@@ -9,7 +9,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import streamlit as st
 
-from app.panels import deposit, fund, fx, loan, logs, sources, status
+from app.panels import agent, deposit, fund, fx, loan, logs, sources, status
 from store.db import init_db
 
 st.set_page_config(page_title="Finans Agent", layout="wide")
@@ -19,7 +19,9 @@ init_db()
 st.title("Finansal Veri ve Hesaplama Agent'ı")
 st.caption(
     "Kişisel kullanım içindir; hiçbir bölüm yatırım tavsiyesi değildir. "
-    "Katılım bankası kar payı bir taahhüt değil, beklentidir."
+    "Katılım bankası kar payı bir taahhüt değil, beklentidir. "
+    "API'si olmayan bankaların oranları için **Agent** sekmesinden kendi API "
+    "anahtarını girip veriyi anında tazeleyebilirsin."
 )
 
 status.render()
@@ -27,8 +29,9 @@ st.divider()
 
 principal = st.number_input("Anapara (TL)", min_value=0, value=1_000_000, step=50_000)
 
-tab_fx, tab_dep, tab_loan, tab_fund, tab_sources, tab_logs = st.tabs(
-    ["Döviz", "Mevduat & Kar Payı", "Kredi", "Fon Simülasyonu", "Kaynaklar", "Kayıtlar"]
+tab_fx, tab_dep, tab_loan, tab_fund, tab_agent, tab_sources, tab_logs = st.tabs(
+    ["Döviz", "Mevduat & Kar Payı", "Kredi", "Fon Simülasyonu", "Agent",
+     "Kaynaklar", "Kayıtlar"]
 )
 
 with tab_fx:
@@ -39,6 +42,8 @@ with tab_loan:
     loan.render(principal)
 with tab_fund:
     fund.render(principal)
+with tab_agent:
+    agent.render()
 with tab_sources:
     sources.render()
 with tab_logs:

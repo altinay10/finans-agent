@@ -51,3 +51,22 @@ def seeded_db(db):
         )
         session.commit()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _llm_kapali(monkeypatch):
+    """Testler geliştiricinin `.env` dosyasına BAĞLI OLMAMALI.
+
+    Bu gerçekten yaşandı: `.env`'e çalışan bir anahtar ve
+    `LLM_FALLBACK_ENABLED=1` yazılınca "hiçbiri ağa çıkmaz" güvencesi sessizce
+    düştü — test paketi Google'a GERÇEK bir istek attı ve token harcadı.
+    Testin sonucu artık makinede hangi dosyanın durduğuna göre değişiyordu.
+
+    Bu yüzden her test varsayılan olarak KAPALI agent ile başlıyor. Açık
+    olmasını isteyen testler zaten kendileri `monkeypatch` ile açıyor; bu
+    fixture onların üstüne yazmaz çünkü önce bu çalışır.
+    """
+    import llm.settings as settings
+
+    monkeypatch.setattr(settings, "LLM_FALLBACK_ENABLED", False)
+    monkeypatch.setattr(settings, "LLM_API_KEY", "")

@@ -13,9 +13,29 @@ koşuda karşılaştırılır. `config/taxes.yaml`'daki bir vergi oranı eskirse
 hiçbir birim test düşmez — bunu yakalayan tek şey bankaların kendi
 rakamlarıdır.
 
-**Panel altı sekme:** Döviz · Mevduat & Kâr Payı · Kredi · Fon Simülasyonu ·
-**Kaynaklar** (her sayının uç noktası) · **Kayıtlar** (koşu/istek/kurtarma/
-oran değişimi/token muhasebesi).
+**Panel yedi sekme:** Döviz · Mevduat & Kâr Payı · Kredi · Fon Simülasyonu ·
+**Agent** (kendi LLM anahtarın + anında tazeleme) · **Kaynaklar** (her sayının
+uç noktası) · **Kayıtlar** (koşu/istek/kurtarma/oran değişimi/token muhasebesi).
+
+### Agent anahtarı — panelden
+
+API'si olmayan bankaların (Halkbank, QNB, DenizBank, ING) kredi oranlarını bir
+dil modeli sayfa metninden çıkarıyor; bunun için bir anahtar gerekiyor.
+Anahtar yalnızca `.env`'den okunsaydı, anahtarı biten kullanıcı için sistem
+kalıcı olarak yarım kalırdı — sunucuya kurulduktan sonra dosyayı düzenleyip
+süreci yeniden başlatmak panele bakan kişinin yapabileceği bir şey değil.
+
+**Agent** sekmesinden anahtar girilir. İki yol var ve farkları önemli:
+
+| | Nereye yazılır | Zamanlayıcı görür mü |
+|---|---|---|
+| **Bu oturumda kullan** | hiçbir yere; yalnızca tarayıcı oturumunda | hayır |
+| **Kalıcı kaydet (.env)** | `.env` (0600, git'e girmez) | evet, bir sonraki turunda |
+
+Zamanlayıcı `.env`'i her turda yeniden okuyor, yani kalıcı kaydettikten sonra
+**yeniden başlatma gerekmez**. Anahtar hiçbir yerde tam gösterilmez, yalnızca
+son dört hane. "Şimdi tazele" düğmesi planlı 15:00 koşusunu beklemeden tek
+seferlik bir koşu yapar ve kaç token harcadığını söyler.
 
 Tasarım dokümanı: `tasarim.html` (kaynak: `/Users/hectorpiece/Downloads/tasarim.html`).
 

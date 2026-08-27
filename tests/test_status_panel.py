@@ -14,14 +14,23 @@ import pytest
 from app.panels import status
 
 
+def _bosalt() -> None:
+    """`st.cache_data` önbelleklerini boşalt — varsa.
+
+    Bir test `_freshness`'i sade bir lambda ile değiştirmiş olabilir; o
+    lambda'nın `clear`'ı yoktur. Fixture sıralaması monkeypatch'in geri
+    almasından önce çalışabildiği için savunmacı olmak gerekiyor.
+    """
+    for fn in (status._freshness, status._limits):
+        getattr(fn, "clear", lambda: None)()
+
+
 @pytest.fixture(autouse=True)
 def _no_cache():
     """st.cache_data testler arasında sızmasın."""
-    status._freshness.clear()
-    status._limits.clear()
+    _bosalt()
     yield
-    status._freshness.clear()
-    status._limits.clear()
+    _bosalt()
 
 
 def _fake(monkeypatch, rows: list[dict], *, agent_on: bool = False) -> None:

@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
+from llm import settings as llm_settings
 from store.clock import ISTANBUL
 from store import heartbeat
 from store.db import SessionLocal, init_db
@@ -215,9 +216,23 @@ def main() -> None:
     heartbeat.start_beating()
 
     if os.environ.get("RUN_ON_START", "1") not in {"0", "false", "no"}:
-        logger.info("açılışta ilk toplama (RUN_ON_START=0 ile kapatılır)")
-        for name, _, _ in SCHEDULE:
-            _run(name, "startup")
+        # Açılışta HEPSİNİ değil, yalnızca BAYAT olanları çek. Bu maddenin
+        # amacı "yeni kurulan sistem boş panel göstermesin"di ve o amaç
+        # korunuyor: boş veritabanında hiçbir toplayıcının başarılı koşusu
+        # yok, dolayısıyla hepsi bayat sayılıp hepsi çalışır.
+        #
+        # Fark, YENİDEN başlatmada ortaya çıkıyor. Eskiden her restart tüm
+        # toplayıcıları koşturuyordu — agent dahil. Agent'ın tazelik sınırı
+        # tam da token yakmasın diye 30 GÜN'e çekilmişken, konteyneri üç kez
+        # yeniden başlatmak üç tur LLM faturası demekti (canlı gözlendi:
+        # her restartta 4 çağrı).
+        acilista = due_by_staleness()
+        if acilista:
+            logger.info("açılışta bayat olanlar çekiliyor: %s", acilista)
+            for name in acilista:
+                _run(name, "startup")
+        else:
+            logger.info("açılışta çekilecek bayat toplayıcı yok — plan bekleniyor")
 
     logger.info(
         "zamanlayıcı başladı — plan: %s | tazelik telafisi: %d dakikada bir",
@@ -235,6 +250,13 @@ def main() -> None:
     while True:
         now = datetime.now(ISTANBUL)
         now_utc = datetime.now(timezone.utc)
+
+        # Panelden girilen anahtar bu süreci de bulsun. Ayarlar süreç
+        # AÇILIRKEN bir kez okunuyordu; kullanıcı .env'e yeni bir anahtar
+        # yazdığında zamanlayıcı onu ancak yeniden başlatılınca görürdü ve
+        # panelde "kaydettim" yazarken planlı koşular eski anahtarla
+        # başarısız olmaya devam ederdi. Tur başına bir dosya okuması.
+        llm_settings.reload_from_env()
 
         # Dakika başına bir kez: uyku kayması yüzünden aynı dakikada iki kez
         # tetiklenmeyi engeller.

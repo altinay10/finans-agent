@@ -170,3 +170,23 @@ def test_panel_and_scheduler_share_one_staleness_limit(db):
     assert scheduler.MAX_AGE_HOURS["loan_rates_llm"] > 24 * 7, (
         "agent toplayıcısı tazelik telafisiyle sık sık çağrılmamalı — token yakar"
     )
+
+
+def test_startup_only_collects_what_is_actually_stale(db):
+    """Her yeniden başlatmada agent'ı koşturmak boşuna token yakıyordu.
+
+    Agent'ın tazelik sınırı tam da bunun için 30 GÜNE çekilmişken, açılışta
+    koşulsuz "hepsini çek" demek konteyner her yeniden başladığında bir tur
+    LLM faturası üretiyordu (canlı gözlendi: restart başına 4 çağrı).
+
+    Maddenin asıl amacı korunmalı: BOŞ veritabanında hepsi çalışmalı ki
+    yeni kurulan sistem boş panel göstermesin.
+    """
+    assert set(scheduler.due_by_staleness()) == {n for n, _, _ in scheduler.SCHEDULE}, (
+        "boş veritabanında hepsi bayat sayılmalı — yeni kurulum boş panel göstermesin"
+    )
+
+    _add_run("loan_rates_llm", hours_ago=1)
+    assert "loan_rates_llm" not in scheduler.due_by_staleness(), (
+        "1 saat önce başarıyla koşmuş agent yeniden çağrılmamalı"
+    )
