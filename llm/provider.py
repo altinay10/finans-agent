@@ -17,16 +17,28 @@ from openai import OpenAI
 from llm import settings
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=4)
+def _client(base_url: str, api_key: str, timeout: int) -> OpenAI:
+    """Önbellek ANAHTARA GÖRE anahtarlanıyor.
+
+    Eskiden `maxsize=1` ve parametresizdi: anahtar değişince önbellekteki
+    istemci eski anahtarla dönmeye devam ediyordu, yani yeni anahtar sessizce
+    yok sayılıyordu. Girdileri önbellek anahtarına koymak bunu yapısal olarak
+    imkânsız kılıyor — ayrıca aynı anda farklı anahtarlarla koşan iş
+    parçacıkları birbirinin istemcisini almıyor.
+    """
+    return OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=0)
+
+
 def get_client() -> OpenAI:
-    if not settings.LLM_API_KEY:
+    key = settings.current_api_key()
+    if not key:
         raise RuntimeError(
             "LLM_API_KEY tanımlı değil — .env dosyasına bak (.env.example örnek alır). "
             "Fallback yalnızca parse() kırıldığında tetiklenir; anahtar olmadan çalışmaz."
         )
-    return OpenAI(
-        base_url=settings.LLM_BASE_URL,
-        api_key=settings.LLM_API_KEY,
-        timeout=settings.LLM_TIMEOUT_SECONDS,
-        max_retries=0,
-    )
+    return _client(settings.LLM_BASE_URL, key, settings.LLM_TIMEOUT_SECONDS)
+
+
+def clear_client_cache() -> None:
+    _client.cache_clear()

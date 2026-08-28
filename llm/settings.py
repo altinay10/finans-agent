@@ -11,6 +11,8 @@ seçildi (kullanıcı isteği, 2026-08-24).
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from dotenv import load_dotenv
 
@@ -134,9 +136,9 @@ def _drop_client_cache() -> None:
     İçeriden import: llm.provider zaten bu modülü import ediyor, döngüyü
     çağrı anına ertelemek gerekiyor.
     """
-    from llm.provider import get_client
+    from llm.provider import clear_client_cache
 
-    get_client.cache_clear()
+    clear_client_cache()
 
 
 def apply(**overrides) -> None:
@@ -186,3 +188,54 @@ def masked_key(key: str | None = None) -> str:
     if not key:
         return "yok"
     return f"…{key[-4:]}" if len(key) > 4 else "…"
+
+
+# ---------------------------------------------------------------------------
+# KOŞU BAŞINA ANAHTAR — panelden elle çalıştırma için.
+#
+# Yukarıdaki `LLM_API_KEY` süreç geneli: `.env`'den gelir ve PANEL SAHİBİNE
+# aittir; planlı koşuları o besler. Paneli açan bir ziyaretçinin girdiği
+# anahtar ise yalnızca kendi tetiklediği koşuyu beslemeli. İkisini aynı
+# modül globaline yazmak İKİ ayrı hata üretiyordu:
+#
+#   * Ziyaretçinin anahtarı süreç geneline yazılınca zamanlayıcının planlı
+#     koşuları da onu kullanırdı.
+#   * Streamlit her tarayıcı oturumunu AYNI SÜREÇTE ayrı bir iş parçacığında
+#     koşturuyor. Modül globali paylaşıldığı için iki ziyaretçi birbirinin
+#     anahtarını görebilir, biri diğerininkiyle çağrı yapabilirdi.
+#
+# ContextVar iş parçacığı başına ayrı değer tutar; sızıntı kapanıyor.
+# ---------------------------------------------------------------------------
+
+_api_key_override: ContextVar[str | None] = ContextVar("llm_api_key_override", default=None)
+
+
+def current_api_key() -> str:
+    """O anki bağlamda kullanılacak anahtar."""
+    return _api_key_override.get() or LLM_API_KEY
+
+
+def fallback_enabled() -> bool:
+    """Agent çağrısına izin var mı.
+
+    Bağlama bir anahtar konulmuşsa izin de vardır: kullanıcı kendi anahtarıyla
+    açıkça "çalıştır" dedi. `LLM_FALLBACK_ENABLED` kazara token yakmaya karşı
+    bir koruma; bilerek basılan bir düğmenin önüne konmasının anlamı yok.
+    """
+    return bool(_api_key_override.get()) or LLM_FALLBACK_ENABLED
+
+
+@contextmanager
+def use_api_key(key: str):
+    """Yalnızca bu blok içinde geçerli anahtar.
+
+    Blok içindeki her LLM çağrısı BU anahtarı kullanır ve `.env`'dekine
+    DÜŞMEZ — çıkarken bağlam eski haline döner.
+    """
+    if not key or not key.strip():
+        raise ValueError("boş anahtarla koşu bağlamı açılamaz")
+    token = _api_key_override.set(key.strip())
+    try:
+        yield
+    finally:
+        _api_key_override.reset(token)

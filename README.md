@@ -25,17 +25,34 @@ Anahtar yalnızca `.env`'den okunsaydı, anahtarı biten kullanıcı için siste
 kalıcı olarak yarım kalırdı — sunucuya kurulduktan sonra dosyayı düzenleyip
 süreci yeniden başlatmak panele bakan kişinin yapabileceği bir şey değil.
 
-**Agent** sekmesinden anahtar girilir. İki yol var ve farkları önemli:
+**Agent** sekmesinden anahtar girilir. İki anahtarın rolü kesin olarak ayrı:
 
-| | Nereye yazılır | Zamanlayıcı görür mü |
+| | Nereden gelir | Neyi besler |
 |---|---|---|
-| **Bu oturumda kullan** | hiçbir yere; yalnızca tarayıcı oturumunda | hayır |
-| **Kalıcı kaydet (.env)** | `.env` (0600, git'e girmez) | evet, bir sonraki turunda |
+| **Sunucu anahtarı** | `.env` | yalnızca **planlı** koşular (zamanlayıcı) |
+| **Oturum anahtarı** | panelde girilir | yalnızca **"Şimdi tazele"** düğmesi |
 
-Zamanlayıcı `.env`'i her turda yeniden okuyor, yani kalıcı kaydettikten sonra
-**yeniden başlatma gerekmez**. Anahtar hiçbir yerde tam gösterilmez, yalnızca
-son dört hane. "Şimdi tazele" düğmesi planlı 15:00 koşusunu beklemeden tek
-seferlik bir koşu yapar ve kaç token harcadığını söyler.
+**"Şimdi tazele" sunucunun anahtarını harcayamaz.** Aksi halde paneli açan
+herkes bir düğmeye — üstelik sınırsız tekrarla — basarak sahibinin faturasını
+şişirebilirdi. Düğmeyi `disabled` çizmek bu işi görmez (istemciden üretilmiş
+bir olay sunucu yolunu yine çağırabilir), o yüzden karar koşu yolunun içinde
+veriliyor: anahtar yoksa `AnahtarGerekli` yükselir ve toplayıcı hiç kurulmaz.
+
+Oturum anahtarı süreç geneline yazılmaz. Streamlit tüm tarayıcı oturumlarını
+aynı süreçte, ayrı iş parçacıklarında koşturuyor; modül globaline yazmak hem
+zamanlayıcının planlı koşularına bulaşır hem de iki ziyaretçinin birbirinin
+anahtarını görmesine yol açardı. Anahtar `ContextVar` ile yalnızca kendi
+koşusunun bağlamına giriyor (`llm/settings.use_api_key`), çağrı bütçesi de
+aynı şekilde.
+
+Anahtar hiçbir yerde tam gösterilmez, yalnızca son dört hane.
+
+**Panelden `.env` yazımı varsayılan olarak KAPALI.** "Kalıcı kaydet" düğmesi
+ziyaretçinin anahtarını *sunucunun* anahtarı yapar; panel dışarı açıksa
+herhangi biri sahibinin anahtarını sessizce değiştirebilir. Kendi makinende
+tek başına çalıştırıyorsan `.env` içine `PANEL_ALLOW_ENV_WRITE=1` yazarak
+açabilirsin — o zaman kaydedilen anahtarı zamanlayıcı da bir sonraki turunda
+okur, yeniden başlatma gerekmez.
 
 Tasarım dokümanı: `tasarim.html` (kaynak: `/Users/hectorpiece/Downloads/tasarim.html`).
 

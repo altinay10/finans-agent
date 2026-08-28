@@ -36,27 +36,79 @@ from store import queries
 
 SESSION_KEY = "agent_api_key"
 
+#: Panelden `.env`'e yazmaya izin var mı. VARSAYILAN KAPALI.
+#:
+#: "Kalıcı kaydet" düğmesi ziyaretçinin anahtarını SUNUCUNUN anahtarı yapar:
+#: panel dışarı açıksa herhangi biri sahibinin anahtarını sessizce
+#: değiştirebilir. Kendi makinesinde tek başına çalıştıran biri için bu
+#: gereksiz bir engel, o yüzden kapatılabilir — ama açık uçlu bırakmak
+#: yerine açıkça açılması gerekiyor.
+def env_write_allowed() -> bool:
+    import os
 
-def apply_session_key() -> str:
-    """Ayarları tazeler, oturumluk anahtar varsa onu üste yazar.
+    return os.environ.get("PANEL_ALLOW_ENV_WRITE", "").strip() in {"1", "true", "yes"}
 
-    Sıralama önemli: önce `.env` okunuyor (başka bir süreç ya da kullanıcı
-    dosyayı değiştirmiş olabilir), sonra bu tarayıcı oturumuna özel anahtar
-    uygulanıyor. Ters sırada, dosyadaki eski anahtar kullanıcının az önce
-    girdiğini sessizce geri alırdı.
 
-    Dönen değer anahtarın KAYNAĞI: 'oturum' | '.env' | 'yok'.
+
+class AnahtarGerekli(RuntimeError):
+    """Elle koşu için kullanıcının kendi anahtarı yok."""
+
+
+def session_key() -> str | None:
+    """Bu tarayıcı oturumuna girilmiş anahtar (yoksa None)."""
+    return (st.session_state.get(SESSION_KEY) or "").strip() or None
+
+
+def key_source() -> str:
+    """Anahtarın kaynağı: 'oturum' | '.env' | 'yok'.
+
+    Oturum anahtarı ARTIK süreç geneline YAZILMIYOR. Eskiden yazılıyordu ve
+    bu iki ayrı hata üretiyordu: ziyaretçinin anahtarı zamanlayıcının planlı
+    koşularına da bulaşıyordu, ve Streamlit tüm tarayıcı oturumlarını aynı
+    süreçte koşturduğu için iki ziyaretçi birbirinin anahtarını görebiliyordu.
+    Oturum anahtarı artık yalnızca kendi tetiklediği koşuya, iş parçacığına
+    bağlı bir bağlam üzerinden giriyor (bkz. llm/settings.use_api_key).
     """
     settings.reload_from_env()
-    oturum = st.session_state.get(SESSION_KEY)
-    if oturum:
-        settings.apply(LLM_API_KEY=oturum, LLM_FALLBACK_ENABLED=True)
+    if session_key():
         return "oturum"
     return ".env" if settings.LLM_API_KEY else "yok"
 
 
+def run_agent(key: str | None):
+    """Agent'ı YALNIZCA verilen anahtarla çalıştırır.
+
+    KARAR BURADA VERİLİYOR, düğmenin çiziminde değil. Bir düğmeyi `disabled`
+    yapmak yalnızca görseldir: istemciden üretilmiş bir olay yine de sunucu
+    tarafındaki bu yolu çağırabilir. Kontrol çalıştırma yolunun içinde olmak
+    zorunda.
+
+    Neden `.env` anahtarına düşmüyor: o anahtar PANEL SAHİBİNİNDİR ve planlı
+    koşular içindir. Paneli açan herkesin bir düğmeye basarak onu
+    harcayabilmesi — üstelik sınırsız tekrarla — doğrudan bir fatura açığıdır.
+    """
+    if not key or not key.strip():
+        raise AnahtarGerekli(
+            "Elle çalıştırma için kendi API anahtarını girmen gerekiyor. "
+            "Sunucudaki anahtar planlı koşulara ayrılmıştır."
+        )
+    # İçeriden import: sekme açılır açılmaz toplayıcı modülünü (ve onunla
+    # httpx/yaml zincirini) yüklemek panelin açılışını yavaşlatırdı.
+    from collectors.loan_rates_llm import LlmLoanRateCollector
+    from llm import extract as llm_extract
+
+    # worker.py ve scheduler.py bunu her koşudan önce yapıyor; panel
+    # yapmıyordu. Panel süreci UZUN ÖMÜRLÜ olduğu için sayaç birikiyordu:
+    # ilk koşu bütçeyi doldurup ikinci koşuyu SESSİZCE hiçbir şey
+    # yapmayan bir "sınıra ulaşıldı"ya çeviriyordu.
+    llm_extract.reset_budget()
+
+    with settings.use_api_key(key):
+        return LlmLoanRateCollector().run(trigger="manual")
+
+
 def render() -> None:
-    kaynak = apply_session_key()
+    kaynak = key_source()
 
     st.subheader("Agent (LLM) anahtarı")
     st.caption(
@@ -77,24 +129,28 @@ def render() -> None:
 # ------------------------------------------------------------- durum ----
 
 def _render_state(kaynak: str) -> None:
+    # Gösterilen anahtar, o kaynağın anahtarı. Oturum anahtarı artık süreç
+    # genelinde durmadığı için `masked_key()`'e AÇIKÇA veriliyor; parametresiz
+    # çağrı `.env`'dekini gösterip kullanıcıya yanlış anahtarı işaret ederdi.
+    gosterilecek = session_key() if kaynak == "oturum" else settings.LLM_API_KEY
     c1, c2, c3 = st.columns(3)
-    c1.metric("Agent", "açık" if settings.LLM_FALLBACK_ENABLED else "kapalı")
-    c2.metric("Anahtar", settings.masked_key(), help=f"kaynak: {kaynak}")
+    c1.metric("Planlı koşular", "açık" if settings.LLM_FALLBACK_ENABLED else "kapalı")
+    c2.metric("Anahtar", settings.masked_key(gosterilecek), help=f"kaynak: {kaynak}")
     c3.metric("Model", settings.LLM_MODEL)
 
     if kaynak == "yok":
         st.warning(
-            "**Anahtar yok — agent çalışmıyor.** Bu, panelin geri kalanını "
+            "**Sunucuda anahtar tanımlı değil.** Bu, panelin geri kalanını "
             "etkilemez: API'si olan bankaların oranları normal toplayıcılarla "
             "geliyor. Yalnızca agent'a bağlı bankalar (Halkbank, QNB, "
-            "DenizBank, ING) güncellenmiyor.\n\n"
+            "DenizBank, ING) planlı koşularda güncellenmiyor.\n\n"
             "Ücretsiz anahtar: https://aistudio.google.com/apikey"
         )
     elif kaynak == "oturum":
         st.info(
             "Anahtar **yalnızca bu tarayıcı oturumunda** geçerli: diske "
-            "yazılmadı, zamanlayıcı süreci onu görmüyor. Planlı koşuların da "
-            "kullanması için aşağıdan kalıcı kaydet."
+            "yazılmadı, başka bir oturum onu göremez, zamanlayıcı da "
+            "kullanmaz. Yalnızca aşağıdaki **Şimdi tazele** düğmesini besler."
         )
         # Geri dönüş yolu olmadan, yanlış anahtar giren kullanıcı tarayıcıyı
         # kapatana kadar sıkışıp kalıyordu.
@@ -118,10 +174,26 @@ def _render_key_form(kaynak: str) -> None:
                  "yalnızca seçtiğin LLM sağlayıcısına gider.",
         )
         model = st.text_input("Model (isteğe bağlı)", value=settings.LLM_MODEL)
-        c1, c2 = st.columns(2)
-        oturumluk = c1.form_submit_button("Bu oturumda kullan", use_container_width=True)
-        kalici = c2.form_submit_button(
-            "Kalıcı kaydet (.env)", type="primary", use_container_width=True
+        kalici_acik = env_write_allowed()
+        if kalici_acik:
+            c1, c2 = st.columns(2)
+            oturumluk = c1.form_submit_button(
+                "Bu oturumda kullan", use_container_width=True
+            )
+            kalici = c2.form_submit_button(
+                "Kalıcı kaydet (.env)", type="primary", use_container_width=True
+            )
+        else:
+            oturumluk = st.form_submit_button(
+                "Bu oturumda kullan", type="primary", use_container_width=True
+            )
+            kalici = False
+
+    if not kalici_acik:
+        st.caption(
+            "Anahtar diske yazılmaz; yalnızca bu tarayıcı oturumunda tutulur. "
+            "Sunucudaki anahtarı panelden değiştirmeye izin vermek için "
+            "`.env` içine `PANEL_ALLOW_ENV_WRITE=1`."
         )
 
     if not (oturumluk or kalici):
@@ -132,6 +204,11 @@ def _render_key_form(kaynak: str) -> None:
 
     anahtar = girilen.strip()
     if kalici:
+        # Çizimdeki dallanma güvence değil: düğmeyi hiç oluşturmamak,
+        # istemciden üretilmiş bir gönderimi engellemez. Karar burada.
+        if not env_write_allowed():
+            st.error("Panelden `.env` yazımı kapalı.")
+            return
         try:
             yol = env_file.set_values(
                 {
@@ -153,13 +230,14 @@ def _render_key_form(kaynak: str) -> None:
             "yeniden başlatmaya gerek yok."
         )
     else:
+        # SÜREÇ GENELİNE YAZILMIYOR: modül globali tüm tarayıcı oturumlarınca
+        # paylaşılıyor ve zamanlayıcının planlı koşuları da onu okurdu.
+        # Anahtar yalnızca oturumda duruyor, koşu anında bağlama giriyor.
         st.session_state[SESSION_KEY] = anahtar
-        settings.apply(
-            LLM_API_KEY=anahtar,
-            LLM_MODEL=model.strip() or settings.LLM_MODEL,
-            LLM_FALLBACK_ENABLED=True,
+        st.success(
+            "Bu oturum için ayarlandı. Diske yazılmadı, başka bir oturum "
+            "göremez. **Şimdi tazele** düğmesi artık çalışıyor."
         )
-        st.success("Bu oturum için ayarlandı. Diske yazılmadı.")
 
     st.rerun()
 
@@ -174,25 +252,34 @@ def _render_run() -> None:
         "bu düğme onu beklemeden bir kez çalıştırır."
     )
 
-    if not settings.LLM_FALLBACK_ENABLED or not settings.LLM_API_KEY:
-        st.button("Agent'ı çalıştır", disabled=True, help="Önce anahtar gir.")
+    # Düğmenin `disabled` olması yalnızca GÖRSELDİR ve tek başına bir güvence
+    # değildir; asıl kontrol `run_agent()` içinde, koşu yolunun kendisinde.
+    # Buradaki dallanma sadece kullanıcıya sebebini söylemek için.
+    if not session_key():
+        st.button("Agent'ı çalıştır", disabled=True)
+        st.caption(
+            "Bu düğme **yalnızca kendi anahtarınla** çalışır. Sunucudaki "
+            "anahtar planlı koşulara ayrılmıştır; panelden harcanamaz."
+        )
         return
 
     if st.button("Agent'ı çalıştır", type="primary"):
-        # İçeriden import: sekme açılır açılmaz toplayıcı modülünü yüklemek
-        # (ve onunla httpx/yaml zincirini) panelin açılışını yavaşlatırdı.
-        from collectors.loan_rates_llm import LlmLoanRateCollector
-
         with st.spinner("Bankalar çekiliyor ve modele soruluyor…"):
             onceki = queries.llm_token_totals(days=1)
-            sonuc = LlmLoanRateCollector().run(trigger="manual")
+            try:
+                # Anahtar burada TEKRAR okunuyor: karar çizim anındaki
+                # duruma değil, koşu anındaki duruma göre veriliyor.
+                sonuc = run_agent(session_key())
+            except AnahtarGerekli as exc:
+                st.error(str(exc))
+                return
             sonraki = queries.llm_token_totals(days=1)
 
         harcanan = sonraki["total_tokens"] - onceki["total_tokens"]
         if sonuc.ok:
             st.success(
-                f"Tamam — **{sonuc.rows} oran** yazıldı, {harcanan} token harcandı. "
-                "Kredi sekmesinde görebilirsin."
+                f"Tamam — **{sonuc.rows} oran** yazıldı, {harcanan} token harcandı "
+                "(kendi anahtarından). Kredi sekmesinde görebilirsin."
             )
         else:
             # Hatanın AŞAMASI önemli: 'fetch' banka sitesini, 'parse' modeli

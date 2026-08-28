@@ -136,30 +136,129 @@ def test_a_new_env_file_is_not_world_readable(tmp_path):
 
 # ------------------------------------------------------------- panel ----
 
-def test_session_key_wins_over_the_file(monkeypatch, tmp_path):
-    """Sıralama önemli: önce dosya, sonra oturumluk anahtar.
+def test_session_key_never_leaks_into_process_wide_settings(monkeypatch):
+    """Ziyaretçinin anahtarı süreç geneline YAZILMAMALI.
 
-    Ters sırada, dosyadaki eski anahtar kullanıcının az önce girdiğini
-    sessizce geri alırdı.
+    Eskiden yazılıyordu ve iki ayrı hata üretiyordu: zamanlayıcının planlı
+    koşuları ziyaretçinin anahtarını kullanırdı, ve Streamlit tüm tarayıcı
+    oturumlarını aynı süreçte koşturduğu için iki ziyaretçi birbirinin
+    anahtarını görebilirdi.
     """
     from app.panels import agent
 
-    monkeypatch.setattr(agent.settings, "reload_from_env", lambda *a: settings.apply(
-        LLM_API_KEY="dosyadaki", LLM_FALLBACK_ENABLED=False))
-    monkeypatch.setattr(agent.st, "session_state", {agent.SESSION_KEY: "oturumdaki"})
+    monkeypatch.setattr(agent.settings, "reload_from_env", lambda *a: None)
+    monkeypatch.setattr(settings, "LLM_API_KEY", "sunucunun-anahtari")
+    monkeypatch.setattr(agent.st, "session_state", {agent.SESSION_KEY: "ziyaretci"})
 
-    assert agent.apply_session_key() == "oturum"
-    assert settings.LLM_API_KEY == "oturumdaki"
-    assert settings.LLM_FALLBACK_ENABLED is True
+    assert agent.key_source() == "oturum"
+    assert settings.LLM_API_KEY == "sunucunun-anahtari"
+    assert settings.current_api_key() == "sunucunun-anahtari"
 
 
 def test_source_is_reported_as_none_when_there_is_no_key(monkeypatch):
     from app.panels import agent
 
-    monkeypatch.setattr(agent.settings, "reload_from_env", lambda *a: settings.apply(
-        LLM_API_KEY=""))
+    monkeypatch.setattr(agent.settings, "reload_from_env", lambda *a: None)
+    monkeypatch.setattr(settings, "LLM_API_KEY", "")
     monkeypatch.setattr(agent.st, "session_state", {})
-    assert agent.apply_session_key() == "yok"
+    assert agent.key_source() == "yok"
+
+
+# ------------------------------------------ sunucunun anahtarı korunuyor ----
+
+def test_manual_run_is_refused_without_the_users_own_key(monkeypatch):
+    """Sunucudaki anahtar panelden HARCANAMAZ.
+
+    `.env`'deki anahtar panel sahibinindir ve planlı koşular içindir. Paneli
+    açan herkesin bir düğmeye basarak — üstelik sınırsız tekrarla — onu
+    harcayabilmesi doğrudan bir fatura açığıdır.
+    """
+    from app.panels import agent
+
+    monkeypatch.setattr(settings, "LLM_API_KEY", "sunucunun-anahtari")
+    monkeypatch.setattr(settings, "LLM_FALLBACK_ENABLED", True)
+
+    kosuldu = {"n": 0}
+    monkeypatch.setattr(
+        "collectors.loan_rates_llm.LlmLoanRateCollector",
+        lambda *a, **k: kosuldu.__setitem__("n", 1),
+    )
+
+    for bos in (None, "", "   "):
+        with pytest.raises(agent.AnahtarGerekli):
+            agent.run_agent(bos)
+    assert kosuldu["n"] == 0, "anahtarsız çağrıda toplayıcı hiç kurulmamalı"
+
+
+def test_manual_run_uses_the_users_key_and_not_the_servers(monkeypatch):
+    """Kullanıcının anahtarı YALNIZCA kendi koşusuna giriyor.
+
+    `.env` anahtarına "düşmek" olmamalı: aksi halde geçersiz bir anahtar
+    giren ziyaretçi, farkında olmadan sunucunun anahtarıyla koşardı.
+    """
+    from app.panels import agent
+
+    monkeypatch.setattr(settings, "LLM_API_KEY", "sunucunun-anahtari")
+    gorulen = {}
+
+    class _Sahte:
+        def run(self, trigger="manual"):
+            gorulen["anahtar"] = settings.current_api_key()
+            gorulen["izin"] = settings.fallback_enabled()
+            return "bitti"
+
+    monkeypatch.setattr("collectors.loan_rates_llm.LlmLoanRateCollector", _Sahte)
+
+    assert agent.run_agent("kullanicinin-anahtari") == "bitti"
+    assert gorulen["anahtar"] == "kullanicinin-anahtari"
+    # Kullanıcı kendi anahtarıyla açıkça "çalıştır" dedi; LLM_FALLBACK_ENABLED
+    # kazara token yakmaya karşı bir koruma ve bilerek basılan düğmenin önüne
+    # konmasının anlamı yok.
+    assert gorulen["izin"] is True
+
+
+def test_the_context_key_is_released_after_the_run(monkeypatch):
+    """Bağlam sızarsa, sonraki planlı koşu ziyaretçinin anahtarıyla giderdi."""
+    monkeypatch.setattr(settings, "LLM_API_KEY", "sunucunun-anahtari")
+    with settings.use_api_key("gecici"):
+        assert settings.current_api_key() == "gecici"
+    assert settings.current_api_key() == "sunucunun-anahtari"
+
+
+def test_two_sessions_do_not_see_each_others_key(monkeypatch):
+    """Streamlit her tarayıcı oturumunu AYNI SÜREÇTE ayrı iş parçacığında
+    koşturuyor; modül globali kullanılsaydı biri diğerininkini görürdü."""
+    import threading
+
+    monkeypatch.setattr(settings, "LLM_API_KEY", "sunucunun-anahtari")
+    gorulen: dict[str, str] = {}
+    kapi = threading.Barrier(2)
+
+    def _oturum(ad: str, anahtar: str) -> None:
+        with settings.use_api_key(anahtar):
+            kapi.wait()          # ikisi de bağlam AÇIKKEN buluşsun
+            gorulen[ad] = settings.current_api_key()
+
+    a = threading.Thread(target=_oturum, args=("a", "anahtar-A"))
+    b = threading.Thread(target=_oturum, args=("b", "anahtar-B"))
+    a.start(); b.start(); a.join(); b.join()
+
+    assert gorulen == {"a": "anahtar-A", "b": "anahtar-B"}
+
+
+def test_writing_to_env_from_the_panel_is_off_by_default(monkeypatch):
+    """"Kalıcı kaydet" ziyaretçinin anahtarını SUNUCUNUN anahtarı yapar.
+
+    Panel dışarı açıksa herhangi biri sahibinin anahtarını sessizce
+    değiştirebilirdi. Açık uçlu bırakmak yerine açıkça açılması gerekiyor.
+    """
+    from app.panels import agent
+
+    monkeypatch.delenv("PANEL_ALLOW_ENV_WRITE", raising=False)
+    assert agent.env_write_allowed() is False
+
+    monkeypatch.setenv("PANEL_ALLOW_ENV_WRITE", "1")
+    assert agent.env_write_allowed() is True
 
 
 # ----------------------------------------------------- testler .env'siz ----
@@ -171,3 +270,46 @@ def test_the_test_suite_never_inherits_a_live_key():
     """
     assert settings.LLM_FALLBACK_ENABLED is False
     assert settings.LLM_API_KEY == ""
+
+
+def test_a_second_manual_run_is_not_silently_blocked(monkeypatch):
+    """Panel süreci uzun ömürlü: çağrı sayacı koşular arasında birikiyordu.
+
+    worker.py ve scheduler.py her koşudan önce sıfırlıyor, panel yapmıyordu.
+    Sonuç: ilk koşu bütçeyi doldurup ikinci koşuyu sessizce hiçbir şey
+    yapmayan bir "sınıra ulaşıldı"ya çeviriyordu.
+    """
+    from app.panels import agent
+    from llm import extract as llm_extract
+
+    class _Sahte:
+        def run(self, trigger="manual"):
+            return llm_extract.calls_made()
+
+    monkeypatch.setattr("collectors.loan_rates_llm.LlmLoanRateCollector", _Sahte)
+
+    llm_extract._calls_made.set(99)
+    assert agent.run_agent("kullanicinin-anahtari") == 0
+
+
+def test_two_sessions_do_not_share_the_call_budget():
+    """Global sayaçla bir ziyaretçinin koşusu diğerininkini tüketirdi."""
+    import threading
+
+    from llm import extract as llm_extract
+
+    gorulen: dict[str, int] = {}
+    kapi = threading.Barrier(2)
+
+    def _oturum(ad: str, kac: int) -> None:
+        llm_extract.reset_budget()
+        for _ in range(kac):
+            llm_extract._calls_made.set(llm_extract.calls_made() + 1)
+        kapi.wait()
+        gorulen[ad] = llm_extract.calls_made()
+
+    a = threading.Thread(target=_oturum, args=("a", 3))
+    b = threading.Thread(target=_oturum, args=("b", 7))
+    a.start(); b.start(); a.join(); b.join()
+
+    assert gorulen == {"a": 3, "b": 7}

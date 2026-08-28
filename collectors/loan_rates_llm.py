@@ -172,7 +172,7 @@ class LlmLoanRateCollector(Collector):
 
         pages: dict[str, dict] = json.loads(raw)
 
-        if not llm_settings.LLM_FALLBACK_ENABLED:
+        if not llm_settings.fallback_enabled():
             # Anahtar/izin yoksa TEK TOKEN harcamadan çık. Bunu bir hata
             # gibi göstermek yanıltıcı olurdu: sistem doğru çalışıyor,
             # sadece agent kapalı.

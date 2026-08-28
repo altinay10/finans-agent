@@ -22,6 +22,7 @@ import json
 import logging
 import re
 import time
+from contextvars import ContextVar
 
 from pydantic import BaseModel, create_model
 
@@ -54,17 +55,21 @@ class LlmDisabled(RuntimeError):
     """Fallback açık değil — .env'de LLM_FALLBACK_ENABLED=1 gerekiyor."""
 
 
-_calls_made = 0
+# Sayaç ContextVar: modül globali OLAMAZ. Panelin "Şimdi tazele" düğmesi
+# uzun ömürlü Streamlit sürecinde koşuyor ve Streamlit her tarayıcı
+# oturumunu AYNI SÜREÇTE ayrı bir iş parçacığında çalıştırıyor. Global
+# sayaçla iki ayrı ziyaretçinin koşusu birbirinin bütçesini tüketir, biri
+# hiç çağrı yapamadan "sınıra ulaşıldı" hatası alırdı.
+_calls_made: ContextVar[int] = ContextVar("llm_calls_made", default=0)
 
 
 def reset_budget() -> None:
-    """Her worker koşusunun başında çağrılır."""
-    global _calls_made
-    _calls_made = 0
+    """Her koşunun BAŞINDA çağrılır (worker, scheduler ve panel)."""
+    _calls_made.set(0)
 
 
 def calls_made() -> int:
-    return _calls_made
+    return _calls_made.get()
 
 
 def _condense(html: str, max_chars: int) -> str:
@@ -100,11 +105,9 @@ def extract(
     "fallback neden devreye girmedi" sorusunun cevabı ve sıfır token
     harcandığının kanıtı olur.
     """
-    global _calls_made
-
     from store.observability import record_llm_call  # gecikmeli: llm -> store bağı
 
-    if not settings.LLM_FALLBACK_ENABLED:
+    if not settings.fallback_enabled():
         record_llm_call(
             trigger_error=trigger_error, trigger_source=trigger_source,
             model=settings.LLM_MODEL, status="disabled", collector=collector, run_id=run_id,
@@ -116,7 +119,8 @@ def extract(
         )
     # `budget` verilmezse onarım fallback'inin dar sınırı geçerlidir.
     limit = settings.LLM_MAX_CALLS_PER_RUN if budget is None else budget
-    if _calls_made >= limit:
+    yapilan = _calls_made.get()
+    if yapilan >= limit:
         record_llm_call(
             trigger_error=trigger_error, trigger_source=trigger_source,
             model=settings.LLM_MODEL, status="budget_exceeded", collector=collector,
@@ -131,7 +135,7 @@ def extract(
     trimmed = _condense(html, settings.LLM_MAX_INPUT_CHARS)
     wrapper = create_model("Rows", rows=(list[schema], ...))
 
-    _calls_made += 1
+    _calls_made.set(yapilan + 1)
     started = time.monotonic()
     try:
         client = get_client()
