@@ -72,6 +72,12 @@ class LlmLoanRow(BaseModel):
     monthly_rate_percent: float        # AYLIK yüzde: 2.99
     term_min_months: int | None = None
     term_max_months: int | None = None
+    # Bu oran HERKESE mi açık? Modelin cevaplayabileceği kadar dar bir soru;
+    # kararı Python'da vermek mümkün değil (bkz. _ground docstring'i).
+    # Varsayılanı YOK: model alanı atlarsa bu görünür bir ayrıştırma hatası
+    # olsun, sessizce boşalan bir tablo değil.
+    available_to_all: bool
+    why: str = ""                      # gerekçe — kayda geçer, denetlenebilir
 
     @model_validator(mode="after")
     def _plausible(self):
@@ -123,6 +129,16 @@ class LlmLoanRateCollector(Collector):
         "- loan_type: ihtiyaç/tüketici -> personal, konut/mortgage -> housing, "
         "taşıt/araç -> vehicle.\n"
         "- Kredi kartı, nakit avans, KMH, ticari kredi oranlarını ALMA.\n"
+        "- Faiz oranı %0 ise DÖNDÜRME: sıfır bir faiz oranı değil, tanıtım "
+        "teklifidir.\n"
+        "- available_to_all: bu oran, bankanın MEVCUT MÜŞTERİSİ dahil "
+        "HERKESİN başvurabileceği genel oran mı? Oranın geçtiği cümleyi, "
+        "ONDAN SONRAKİ cümleleri ve dipnotları da oku. Şunlardan biri "
+        "geçerliyse false yaz: yalnızca yeni/ilk kez müşteri olanlara; "
+        "yalnızca kampanyanın ilk kredi kullanımında; adı ayrıca belirtilmiş "
+        "özel bir ürüne özgü; belirli bir tarihe kadar geçerli tanıtım "
+        "oranı.\n"
+        "- why: kararının gerekçesini sayfadan tek cümleyle yaz.\n"
         "- Emin olmadığın hiçbir kaydı üretme. Hiç oran yoksa boş liste döndür.\n"
         "\n"
         "SAYFA:\n{html}\n"
@@ -272,7 +288,12 @@ class LlmLoanRateCollector(Collector):
         now = utc_now()
         today = istanbul_today()
 
-        # Aynı (kurum, tür) için en düşük oranı bırak (yukarıdaki gerekçe).
+        # Aynı (kurum, tür) için en düşük oranı bırak. Bu kural ANCAK
+        # _ground() koşullu oranları eledikten sonra güvenli: eskiden
+        # elemiyordu ve "en düşük", kampanya sayfalarında sistematik olarak
+        # "yalnızca yeni müşteriye verilen oran" anlamına geliyordu.
+        # Buraya gelen oranların hepsi herkese açık olduğu için, en düşüğü
+        # seçmek artık kullanıcının gerçekten alabileceği en iyi orandır.
         best: dict[tuple[str, str], LoanRateRecord] = {}
         for r in records:
             key = (r.institution, r.loan_type)
@@ -394,17 +415,44 @@ def _rate_regions(text: str, max_chars: int = MAX_PROMPT_CHARS) -> str:
 
 
 def _ground(rows, text: str, code: str) -> tuple[list, int]:
-    """Modelin döndürdüğü oranlardan yalnızca SAYFADA GEÇENLERİ bırakır."""
+    """Sayfada GEÇEN ve HERKESE AÇIK oranları bırakır.
+
+    İki ayrı kontrol, iki ayrı hata türü için:
+
+    ZEMİNLEME oranın uydurma olmadığını garanti eder. Bu yeterli sanılmıştı
+    ve değildi — canlı gözlem (2026-08-30): panel ING'yi aylık %0,99 diye
+    gösteriyordu, DenizBank'ın %2,99'unun üçte biri. Sayı sayfada gerçekten
+    yazıyordu, yani zeminleme kusursuz çalışmıştı; %0,99 "Turuncu Ekstra
+    Avantajlı Kredi"nin oranıydı ve YALNIZCA kampanyanın ilk kredi
+    kullanımında geçerliydi. `persist` en düşüğü sakladığı için kampanya
+    sayfalarında "en düşük oran" sistematik olarak "en koşullu oran"
+    oluyordu.
+
+    ERİŞİLEBİLİRLİK kontrolü bu ikinci hatayı kapatıyor ve kararı MODEL
+    veriyor. Python'da anahtar kelimeyle denendi ve başarısız oldu: %0,99'u
+    diskalifiye eden cümle, oranın geçtiği cümlenin bir SONRAKİSİ; üstelik
+    Halkbank'ın gerekçesi "yeni müşterilere özel olduğuna dair kısıt YOK"
+    diyor — "yeni müşteri" kelimesini arayan bir filtre onu da elerdi.
+    Modele sorulan soru bilinçli olarak dar: yorum değil, tek bir evet/hayır.
+    Uydurmaya karşı asıl güvence hâlâ zeminleme, bu onun üstüne biniyor.
+    """
     kept, dropped = [], 0
     for row in rows:
-        if _appears_in_text(row.monthly_rate_percent, text):
-            kept.append(row)
-        else:
+        if not _appears_in_text(row.monthly_rate_percent, text):
             dropped += 1
             logger.warning(
                 "loan_rates_llm/%s: %%%.2f sayfada bulunamadı — kayıt atıldı",
                 code, row.monthly_rate_percent,
             )
+            continue
+        if not row.available_to_all:
+            dropped += 1
+            logger.info(
+                "loan_rates_llm/%s: %%%.2f herkese açık değil, atlandı — %s",
+                code, row.monthly_rate_percent, (row.why or "gerekçe yok")[:100],
+            )
+            continue
+        kept.append(row)
     return kept, dropped
 
 

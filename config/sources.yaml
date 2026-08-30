@@ -480,13 +480,18 @@ loan_llm_endpoints:
     auth: none
     status: active
     institution: QNB
-    last_verified: 2026-08-26
+    last_verified: 2026-08-30
     note: >
       Sayfa 200; hem aylık faiz (ör. %2,84 / %3,19) hem yıllık maliyet oranı
       (%68,64 / %71,24) yazıyor. Prompt açıkça "yıllık maliyet oranını ALMA"
       diyor; zeminleme kontrolü de yıllık oranın aylık sanılmasını
       yakalayamaz (o sayı da sayfada geçer), asıl koruma bant kontrolü:
       %20 üzeri aylık oran reddedilir.
+      2026-08-30: SAYFA VERİ ÜRETMİYOR ve bu doğru davranış. Sayfadaki üç
+      oranın (%0 / %2,84 / %3,19) üçü de "son 1 yıl içinde QNB müşterisi
+      olmayanlara" özel kampanya oranı; herkese açık genel oran yayınlanmıyor.
+      Erişilebilirlik elemesi hepsini atıyor. Kaynak kapalı DEĞİL — sayfa
+      genel oran yayınlarsa kendiliğinden gelmeye başlar.
 
   denizbank:
     url: "https://www.denizbank.com/krediler/bireysel-bankacilik/ihtiyac-kredisi"
@@ -503,8 +508,14 @@ loan_llm_endpoints:
     auth: none
     status: active
     institution: ING
-    last_verified: 2026-08-26
-    note: "Sayfa 200; metinde birden fazla kampanya oranı geçiyor (ör. %1,69 / %2,99 / %3,48)."
+    last_verified: 2026-08-30
+    note: >
+      Sayfa 200; metinde birden fazla oran geçiyor ve HEPSİ AYNI ÜRÜNE AİT
+      DEĞİL. %1,69 ve %2,99 yalnızca yeni ING'lilere, %0,99 "Turuncu Ekstra
+      Avantajlı Kredi"nin yalnızca ilk kullanımına, %3,48 ise mevcut
+      müşteriler dahil herkese. Bu sayfa, "en düşük oranı sakla" kuralının
+      neden yanlış olduğunu gösteren örnek: 2026-08-30'a kadar panel ING'yi
+      %0,99 diye gösteriyordu (bkz. _ground docstring'i). Doğru değer %3,48.
 
   teb:
     url: "https://www.teb.com.tr/ihtiyac-kredileri/"

@@ -53,8 +53,9 @@ def test_hallucinated_rate_is_dropped_and_counted(db, caplog):
     """Sayfada olmayan oran ATILIR, atıldığı da kayda geçer."""
     collector = LlmLoanRateCollector(banks={})
     rows = [
-        LlmLoanRow(loan_type="personal", monthly_rate_percent=2.99),
-        LlmLoanRow(loan_type="housing", monthly_rate_percent=9.99),   # uydurma
+        LlmLoanRow(loan_type="personal", monthly_rate_percent=2.99, available_to_all=True),
+        LlmLoanRow(loan_type="housing", monthly_rate_percent=9.99,
+                   available_to_all=True),                            # uydurma
     ]
     from collectors.loan_rates_llm import _ground
 
@@ -211,3 +212,71 @@ def test_visible_text_strips_scripts_and_tags():
     # Script içindeki sayı metne SIZMAMALI: zeminleme kontrolü metin
     # üzerinde çalışıyor ve script'teki bir sayı sahte bir onay üretirdi.
     assert "%9,99" not in text
+
+
+# ------------------------------------------- herkese açık olmayan oranlar ----
+#
+# CANLI GÖZLEM (2026-08-30): panel ING'yi aylık %0,99 gösteriyordu —
+# DenizBank'ın %2,99'unun üçte biri. Sayı sayfada gerçekten yazıyordu, yani
+# zeminleme kusursuz çalışmıştı; %0,99 "Turuncu Ekstra Avantajlı Kredi"nin
+# oranıydı ve yalnızca kampanyanın İLK kredi kullanımında geçerliydi.
+
+ING_SAYFA = (
+    "İlk kez ING'li olanlara %1,69 6 ay vadede 25.000 TL'ye kadar kredi "
+    "fırsatı ya da %2,99'dan başlayan faiz oranlarıyla 36 ay vadeli ihtiyaç "
+    "kredisi. Mevcut ING'liler de %3,48'den başlayan faiz oranı ile tüketici "
+    "kredisi kullanabilir. Turuncu Ekstra Avantajlı Kredi'de sözleşme faizi "
+    "değişmeyecek olup %0,99'dan başlar."
+)
+
+
+def _satir(oran, herkese, why=""):
+    return LlmLoanRow(loan_type="personal", monthly_rate_percent=oran,
+                      available_to_all=herkese, why=why)
+
+
+def test_a_rate_that_is_not_open_to_everyone_is_dropped():
+    """`persist` en düşüğü saklıyor; eleme olmadan panel en yanıltıcı sayıyı
+    gösteriyordu. Kullanıcı ING'yi DenizBank'tan üç kat ucuz sanırdı."""
+    from collectors.loan_rates_llm import _ground
+
+    rows = [
+        _satir(0.99, False, "yalnızca kampanyanın ilk kredi kullanımında"),
+        _satir(1.69, False, "ilk kez ING'li olanlara"),
+        _satir(2.99, False, "yeni ING'lilerin kullanımlarında"),
+        _satir(3.48, True, "Mevcut ING'liler de kullanabilir"),
+    ]
+    kept, dropped = _ground(rows, ING_SAYFA, "ING")
+
+    assert [r.monthly_rate_percent for r in kept] == [3.48]
+    assert dropped == 3
+    # persist en düşüğü alıyor: eleme sonrası doğru cevap %3,48.
+    assert min(r.monthly_rate_percent for r in kept) == 3.48
+
+
+def test_grounding_still_runs_before_the_availability_check():
+    """Erişilebilirlik kontrolü zeminlemenin YERİNE geçmiyor, ÜSTÜNE biniyor.
+
+    Uydurulmuş bir oranı model "herkese açık" diye işaretleyerek geçiremez.
+    """
+    from collectors.loan_rates_llm import _ground
+
+    kept, dropped = _ground([_satir(7.77, True, "uydurma")], ING_SAYFA, "ING")
+    assert kept == [] and dropped == 1
+
+
+def test_a_general_rate_survives_even_when_the_page_is_a_campaign_page():
+    """Anahtar kelimeyle elemek İKİ bankayı birden kaybettirirdi.
+
+    Halkbank'ın gerçek gerekçesi "yeni müşterilere özel olduğuna dair kısıt
+    YOK" — "yeni müşteri" kelimesini arayan bir filtre onu da elerdi. Karar
+    bu yüzden kelimede değil, modelin cevapladığı dar soruda.
+    """
+    from collectors.loan_rates_llm import _ground
+
+    sayfa = "Avantajlı İhtiyaç Kredisini %4,19 faiz oranından kullanın."
+    kept, _ = _ground(
+        [_satir(4.19, True, "yalnızca yeni müşterilere özel olduğuna dair kısıt yok")],
+        sayfa, "HALKBANK",
+    )
+    assert [r.monthly_rate_percent for r in kept] == [4.19]
