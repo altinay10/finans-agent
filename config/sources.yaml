@@ -26,6 +26,7 @@ institutions:
   - {code: ODEABANK,     name: "Odeabank",               kind: bank}
   - {code: FIBABANKA,    name: "Fibabanka",              kind: bank}
   - {code: ANADOLUBANK,  name: "Anadolubank",            kind: bank}
+  - {code: BURGAN,       name: "Burgan Bank",            kind: bank}
 
 fx_endpoints:
   # last_verified alanı elle doğrulama tarihidir — 6 aydan eskiyse şüpheyle yaklaş.
@@ -677,6 +678,32 @@ loan_llm_endpoints:
       repo ve kira sertifikası oranları var, kredi bölümü yok. Agent'ın boş
       dönmesi DOĞRUYDU. Kredi oranları için Ziraat'in ürün sayfaları
       gerekiyor; onlar da oranı statik HTML'de yayınlamıyor.
+
+  burgan_ihtiyac:
+    url: "https://www.burgan.com.tr/en/wealth-management/loans/proprietary-personal-loan"
+    type: llm_html
+    auth: none
+    status: active
+    institution: BURGAN
+    loan_type_hint: personal
+    last_verified: 2026-09-03
+    note: >
+      Sayfa İNGİLİZCE ("Standard Personal Loan ... interest rate of 3.75%").
+      Türkçe sayfa 404 veriyor; İngilizcesi aynı oranları yayınlıyor ve
+      model iki dilde de çalışıyor.
+
+  burgan_konut:
+    url: "https://www.burgan.com.tr/en/wealth-management/loans/housing-loan"
+    type: llm_html
+    auth: none
+    status: active
+    institution: BURGAN
+    loan_type_hint: housing
+    last_verified: 2026-09-03
+    note: >
+      İngilizce; "interest rate of 3.25% per month" diye AYLIK olduğunu
+      açıkça yazıyor — bu sayfada yıllık/aylık karışması riski düşük.
+
 
 profit_share_endpoints:
   emlakkatilim:
