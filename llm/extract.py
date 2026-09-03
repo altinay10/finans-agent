@@ -148,6 +148,9 @@ def extract(
             messages=[{"role": "user", "content": (prompt or PROMPT).format(html=trimmed)}],
             temperature=0,
             max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+            # Sağlayıcıya özel alanlar (ör. Qwen'de enable_thinking=False).
+            # Boşsa hiçbir şey eklenmez — Gemini'de olduğu gibi.
+            extra_body=settings.LLM_EXTRA_BODY or None,
         )
     except Exception as exc:  # noqa: BLE001 - başarısız çağrı da kaydedilmeli
         record_llm_call(

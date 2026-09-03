@@ -28,6 +28,7 @@ tek token harcamadan "atlandı" diyerek biter. Anahtar girilmeden hiçbir şey
 """
 from __future__ import annotations
 
+import html as html_lib
 import json
 import logging
 import re
@@ -70,6 +71,10 @@ class LlmLoanRow(BaseModel):
 
     loan_type: str                     # 'personal' | 'housing' | 'vehicle'
     monthly_rate_percent: float        # AYLIK yüzde: 2.99
+    # DEMİRLEME: oranın geçtiği cümlenin birebir kopyası. Modeli, kararını
+    # oranın KENDİ cümlesine dayandırmaya zorluyor; sayfanın başka bir
+    # yerindeki koşulu bu orana yapıştırmasını engelleyen tek şey bu.
+    rate_sentence: str = ""
     term_min_months: int | None = None
     term_max_months: int | None = None
     # Bu oran HERKESE mi açık? Modelin cevaplayabileceği kadar dar bir soru;
@@ -121,28 +126,79 @@ class LlmLoanRateCollector(Collector):
     PROMPT = (
         "Aşağıdaki banka sayfasından KREDİ FAİZ ORANLARINI çıkar.\n"
         "\n"
-        "KURALLAR:\n"
+        "Her oran için SIRAYLA şunu yap:\n"
+        "1) rate_sentence: oranın GEÇTİĞİ cümleyi sayfadan BİREBİR kopyala. "
+        "Kopyaladığın metin o oranın rakamını İÇERMEK ZORUNDA. Oran bir "
+        "TABLODA ise cümle arama: oranın bulunduğu tablo satırını (ve varsa "
+        "üstündeki başlığı) kopyala. Cümle bulamamak, oranı atlamak için "
+        "gerekçe DEĞİLDİR.\n"
+        "2) available_to_all: kararını ÖNCE bu cümleye, sonra onu İZLEYEN "
+        "cümlelere bakarak ver. Sayfanın başka bir yerindeki, BAŞKA BİR "
+        "ÜRÜNE ait koşulları bu orana UYGULAMA. '### ' ile başlayan satırlar "
+        "bölüm başlığıdır; farklı bölümdeki koşul bu oranı bağlamaz.\n"
+        "   Soru KİMİN başvurabileceğiyle ilgilidir, NE KADAR alabileceğiyle "
+        "değil. TUTAR ve VADE kademeleri ('20.000 TL'ye kadar', '36 ay "
+        "vadede') KISITLAMA DEĞİLDİR; bunlar yüzünden false YAZMA.\n"
+        "   false yaz: yalnızca YENİ/ilk kez müşteri olanlara; yalnızca "
+        "kampanyanın ilk kullanımında; belirli bir MÜŞTERİ GRUBUNA özel ürün "
+        "(emekli, esnaf, öğretmen, kamu çalışanı); ön onaylı/davetli "
+        "müşterilere; tarihli tanıtım oranı.\n"
+        "   true yaz: mevcut müşteri dahil herkesin başvurabileceği genel "
+        "oran — tutar/vade kademesi olsa bile.\n"
+        "   DİKKAT: 'MEVCUT MÜŞTERİ' BİR KISIT DEĞİLDİR. Bankanın kendi "
+        "müşterilerine açık olan oran, o bankanın GENEL orandır (herkes "
+        "müşteri olabilir) — bunun için false YAZMA. Kısıt olan şey tersidir: "
+        "oranın YALNIZCA yeni müşterilere verilmesi, çünkü o zaman mevcut "
+        "müşteri o oranı alamaz.\n"
+        "   Türkçede 'de/da' KAPSAYICIDIR: 'Mevcut müşteriler DE "
+        "kullanabilir' cümlesi oranı sınırlamaz, tam tersine kapsamı "
+        "genişletir. Bunu dışlayıcı okuma.\n"
+        "3) why: gerekçen, tek cümle.\n"
+        "\n"
+        "DİĞER KURALLAR:\n"
         "- Yalnızca sayfada AÇIKÇA YAZAN oranları döndür. Hesaplama yapma, "
         "ortalama alma, tahmin etme.\n"
-        "- Oran AYLIK yüzde olmalı (2.99 gibi). Sayfada yıllık maliyet oranı "
-        "(%68 gibi) yazıyorsa onu DÖNDÜRME — yalnızca aylık faiz oranını al.\n"
-        "- loan_type: ihtiyaç/tüketici -> personal, konut/mortgage -> housing, "
-        "taşıt/araç -> vehicle.\n"
+        "- Oran AYLIK yüzde olmalı (2.99 gibi). Yıllık maliyet oranını "
+        "(%68 gibi) DÖNDÜRME.\n"
+        "- loan_type: ihtiyaç/tüketici -> personal, konut/mortgage -> "
+        "housing, taşıt/araç -> vehicle.\n"
         "- Kredi kartı, nakit avans, KMH, ticari kredi oranlarını ALMA.\n"
         "- Faiz oranı %0 ise DÖNDÜRME: sıfır bir faiz oranı değil, tanıtım "
         "teklifidir.\n"
-        "- available_to_all: bu oran, bankanın MEVCUT MÜŞTERİSİ dahil "
-        "HERKESİN başvurabileceği genel oran mı? Oranın geçtiği cümleyi, "
-        "ONDAN SONRAKİ cümleleri ve dipnotları da oku. Şunlardan biri "
-        "geçerliyse false yaz: yalnızca yeni/ilk kez müşteri olanlara; "
-        "yalnızca kampanyanın ilk kredi kullanımında; adı ayrıca belirtilmiş "
-        "özel bir ürüne özgü; belirli bir tarihe kadar geçerli tanıtım "
-        "oranı.\n"
-        "- why: kararının gerekçesini sayfadan tek cümleyle yaz.\n"
-        "- Emin olmadığın hiçbir kaydı üretme. Hiç oran yoksa boş liste döndür.\n"
+        "- Emin olmadığın hiçbir kaydı üretme. Hiç oran yoksa boş liste "
+        "döndür.\n"
         "\n"
         "SAYFA:\n{html}\n"
     )
+
+    def _prompt_for(self, code: str) -> str:
+        """Sayfanın ÜRÜN TÜRÜ ipucunu prompt'a gömer.
+
+        NEDEN: bir oran tabloda geçtiğinde satırda ürün adı olmuyor
+        ("100.000 TL | 48 Ay | 4.14%") ve model türü tahmin edemeyip
+        varsayılan olarak `personal` yazıyor. DenizBank'ın TAŞIT sayfası ve
+        Anadolubank'ın KONUT sayfası böyle yanlış sınıflanıp ihtiyaç
+        kredisi tablosuna düşüyordu (2026-09-02'de gözlendi).
+
+        İpucu envanterden geliyor — hangi sayfayı çektiğimizi zaten
+        biliyoruz, bunu modelden gizlemenin bir anlamı yok. Yine de EMİR
+        değil ipucu: sayfada açıkça başka bir tür yazıyorsa model onu
+        yazmalı, çünkü bazı sayfalar birden fazla ürünü listeliyor.
+        """
+        hint = (self.banks.get(code) or {}).get("loan_type_hint")
+        if not hint:
+            return self.PROMPT
+        etiket = LOAN_TYPE_LABELS.get(hint, hint)
+        satir = (
+            f"- BU SAYFA ağırlıklı olarak {etiket.upper()} kredisi sayfasıdır; "
+            f"tablodaki oranlar aksi YAZMIYORSA loan_type='{hint}' yaz. "
+            f"Sayfada açıkça başka bir ürün belirtiliyorsa onu kullan.\n"
+            "\n"
+        )
+        # Yer tutucu ({hint} gibi) KULLANILMIYOR: prompt'u doğrudan
+        # `.format(html=...)` ile kullanan her çağrı yolu, bilmediği bir
+        # yer tutucuda KeyError ile patlardı. Ekleme yapmak güvenli.
+        return self.PROMPT.replace("SAYFA:\n{html}", satir + "SAYFA:\n{html}", 1)
 
     def __init__(self, banks: dict[str, dict] | None = None) -> None:
         super().__init__()
@@ -221,7 +277,7 @@ class LlmLoanRateCollector(Collector):
                     run_id=self._run_id,
                     trigger_source=code.lower(),
                     budget=budget,
-                    prompt=self.PROMPT,
+                    prompt=self._prompt_for(code),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("loan_rates_llm/%s: agent başarısız: %s", code, exc)
@@ -230,25 +286,23 @@ class LlmLoanRateCollector(Collector):
 
             kept, dropped = _ground(rows, text, code)
             if dropped:
-                logger.warning(
-                    "loan_rates_llm/%s: %s kayıt ZEMİNLEME'de elendi (sayfada yok)",
-                    code, dropped,
-                )
+                logger.warning("loan_rates_llm/%s: %s", code, dropped.aciklama())
             if not kept:
                 self.record_source(
                     code.lower(), phase="parse", status="empty",
-                    error=f"agent {len(rows)} kayıt döndürdü, {dropped} tanesi sayfada bulunamadı",
+                    error=f"agent {len(rows)} kayıt döndürdü — {dropped.aciklama()}",
                 )
                 continue
 
             self.record_source(
                 code.lower(), phase="parse", status="ok", rows=len(kept),
-                error=(f"{dropped} kayıt zeminlemede elendi" if dropped else None),
+                error=(dropped.aciklama() if dropped else None),
             )
+            kurum = self.banks[code].get("institution", code)
             for row in kept:
                 records.append(
                     LoanRateRecord(
-                        institution=code,
+                        institution=kurum,
                         loan_type=row.loan_type,
                         monthly_rate=row.monthly_rate_percent / 100,
                         term_min=row.term_min_months,
@@ -354,17 +408,53 @@ def _looks_blocked(html: str) -> bool:
     return any(marker in html for marker in _BLOCK_MARKERS)
 
 
+_HEADING_RE = re.compile(r"<(h[1-6])[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
+_BLOCK_RE = re.compile(r"</?(p|div|br|li|tr|td|th|section|article)[^>]*>", re.IGNORECASE)
+
+#: Başlıkların metindeki işareti. Modelin "burada yeni bir bölüm başlıyor"
+#: diyebilmesi için görünür olmalı; ZEMİNLEME de bu metin üzerinde çalıştığı
+#: için işaretin oran rakamlarına benzememesi şart.
+HEADING_MARK = "\n\n### "
+
+
 def _visible_text(html: str) -> str:
-    """HTML'i düz metne indirger.
+    """HTML'i düz metne indirger AMA BÖLÜM SINIRLARINI KORUR.
 
     Modele ham HTML göndermek token'ın büyük kısmını etiketlere harcar.
     Düz metin hem ucuz hem de ZEMİNLEME kontrolünün üzerinde çalıştığı
     yüzey: "oran sayfada geçiyor mu" sorusu metin üzerinde sorulmalı,
     çünkü model de metni görüyor.
+
+    BAŞLIKLAR NEDEN KORUNUYOR: eskiden bütün etiketler boşluğa çevriliyordu
+    ve sayfanın bölüm yapısı yok oluyordu. DenizBank sayfasında bu, somut
+    bir VERİ HATASI üretti (2026-09-02'de altı ayrı modelle doğrulandı):
+
+        ...emekli maaşını DenizBank aracılığıyla alan müşterilere özel bir
+        ihtiyaç kredisidir. Özellikleri %2,99'dan başlayan faiz oranları...
+
+    Düzleştirilmiş metinde "emekli" cümlesi ile genel %2,99 oranı yan yana
+    düşüyordu; denenen ALTI modelin ALTISI da oranı emeklilere özel sanıp
+    eledi. Oysa sayfanın kendi yapısında "Özellikleri" bir <h2>, yani yeni
+    bir bölümün başlangıcı ve %2,99 "Oran ve Fiyatlar" tablosunun resmî
+    satırı. Yani hata modelde değil, modele verdiğimiz girdideydi.
     """
     cleaned = _SCRIPT_RE.sub(" ", html)
+    # Başlıkları önce işaretle — etiketler silinmeden önce yapılmalı.
+    cleaned = _HEADING_RE.sub(
+        lambda m: HEADING_MARK + _TAG_RE.sub(" ", m.group(2)).strip() + "\n", cleaned
+    )
+    # Blok etiketleri satır sonuna çevir: tablo satırları ve maddeler
+    # birbirine yapışmasın.
+    cleaned = _BLOCK_RE.sub("\n", cleaned)
     cleaned = _TAG_RE.sub(" ", cleaned)
-    cleaned = cleaned.replace("&nbsp;", " ").replace("&amp;", "&")
+    # TÜM HTML varlıklarını çöz, elle iki tanesini değil.
+    # CepteTEB sayfası bunu somut olarak kırdı: metin modele
+    # "Hen&uuml;z TEB ya da CEPTETEB m&uuml;şterisi değilseniz" diye
+    # gidiyordu ve model bu bozuk Türkçeden hiçbir oran çıkaramıyordu
+    # (2026-09-02'de gözlendi). Elle kurulmuş iki varlıklı liste, geri
+    # kalan yüzlerce varlığı sessizce metinde bırakıyordu.
+    cleaned = html_lib.unescape(cleaned)
+    cleaned = cleaned.replace("\xa0", " ")
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return _WS_RE.sub("\n", cleaned).strip()
 
@@ -393,8 +483,8 @@ def _rate_regions(text: str, max_chars: int = MAX_PROMPT_CHARS) -> str:
     """
     spans: list[tuple[int, int]] = []
     for match in _RATE_RE.finditer(text):
-        start = max(0, match.start() - CONTEXT_CHARS)
-        end = min(len(text), match.end() + CONTEXT_CHARS)
+        start = _snap_back(text, match.start() - CONTEXT_CHARS, match.start())
+        end = _snap_forward(text, min(len(text), match.end() + CONTEXT_CHARS))
         if spans and start <= spans[-1][1]:
             spans[-1] = (spans[-1][0], max(spans[-1][1], end))
         else:
@@ -412,6 +502,89 @@ def _rate_regions(text: str, max_chars: int = MAX_PROMPT_CHARS) -> str:
         if total >= max_chars:
             break
     return "\n---\n".join(chunks)
+
+
+# Pencere sınırlarını taşımaya izin verilen mesafe. Küçük tutuldu: cümle
+# bulunamazsa pencereyi büyütmek yerine ham sınırda kalmak daha ucuz.
+SNAP_CHARS = 200
+_SENT_END = re.compile(r"[.!?…]\s|\n")
+
+
+class _Eleme(int):
+    """Elenen kayıt sayısı — AMA sebebini de taşır.
+
+    Düz bir sayı yetmiyordu: koşu kaydına "N kayıt sayfada bulunamadı"
+    yazılıyordu ve bu, erişilebilirlik elemesini UYDURMA gibi gösteriyordu.
+    Odeabank'ta yedi oranın yedisi de sayfada gerçekten yazıyordu; hepsi
+    "ön onaylı müşterilere" özel olduğu için elenmişti, ki bu doğru
+    davranış. Yanlış etiket beni olmayan bir hatayı kovalamaya gönderdi.
+
+    int'ten türüyor ki mevcut `if dropped:` kontrolleri aynen çalışsın.
+    """
+
+    def __new__(cls, toplam: int, yok_sayfada: int, kosullu: int):
+        self = super().__new__(cls, toplam)
+        self.yok_sayfada = yok_sayfada
+        self.kosullu = kosullu
+        return self
+
+    def aciklama(self) -> str:
+        parcalar = []
+        if self.yok_sayfada:
+            parcalar.append(f"{self.yok_sayfada} kayıt sayfada bulunamadı")
+        if self.kosullu:
+            parcalar.append(f"{self.kosullu} kayıt herkese açık değil")
+        return ", ".join(parcalar) or "eleme yok"
+
+
+def _snap_back(text: str, pos: int, rate_pos: int) -> int:
+    """Pencere başlangıcını oranın KENDİ bölümüne çeker.
+
+    İki aşamalı, çünkü iki ayrı hata vardı:
+
+    1. BÖLÜM SINIRI (asıl olan): `pos` ile oranın kendisi arasında bir
+       başlık varsa pencere ORADAN başlar. Önceki bölüm başka bir ürünü
+       anlatıyor olabilir ve modele onu göstermek yanlış cevap ürettiriyor
+       — DenizBank'ta "emeklilere yönelik borç transfer kredisi" paragrafı
+       genel %2,99 oranının hemen üstünde duruyordu ve denenen altı modelin
+       altısı da oranı bu paragrafa bağlayıp eledi.
+       Geriye değil İLERİ bakmak şart: başlık, pencerenin başlangıcı ile
+       oran arasında; pencere başından geriye bakmak onu ıskalıyordu.
+
+    2. CÜMLE SINIRI: başlık yoksa en azından cümle ortasından başlama.
+    """
+    if pos <= 0 and rate_pos <= 0:
+        return 0
+    pos = max(0, pos)
+    # 1) Oran ile pencere başlangıcı ARASINDAKİ son başlık.
+    ara = text.rfind(HEADING_MARK.strip("\n"), pos, rate_pos)
+    if ara != -1:
+        return ara
+    # 2) Pencere başlangıcından hemen önceki cümle sonu.
+    bas = max(0, pos - SNAP_CHARS)
+    pencere = text[bas:pos]
+    son = None
+    for m in _SENT_END.finditer(pencere):
+        son = m.end()
+    return bas + son if son is not None else pos
+
+
+def _snap_forward(text: str, pos: int) -> int:
+    """Pencere sonunu bir SONRAKİ cümle sınırına uzatır.
+
+    Oranı diskalifiye eden cümle çoğu zaman oranın HEMEN ARDINDAN gelir
+    (ING'de %0,99'u kampanyaya bağlayan cümle böyleydi); yarım bırakılan
+    bir cümle o kanıtı kesip atardı.
+    """
+    if pos >= len(text):
+        return len(text)
+    sinir = min(len(text), pos + SNAP_CHARS)
+    # Bir sonraki başlığa DEĞME: sonraki bölüm bu oranı ilgilendirmiyor.
+    baslik = text.find(HEADING_MARK.strip("\n"), pos, sinir)
+    if baslik != -1:
+        return baslik
+    m = _SENT_END.search(text, pos, sinir)
+    return m.end() if m else pos
 
 
 def _ground(rows, text: str, code: str) -> tuple[list, int]:
@@ -436,10 +609,11 @@ def _ground(rows, text: str, code: str) -> tuple[list, int]:
     Modele sorulan soru bilinçli olarak dar: yorum değil, tek bir evet/hayır.
     Uydurmaya karşı asıl güvence hâlâ zeminleme, bu onun üstüne biniyor.
     """
-    kept, dropped = [], 0
+    kept, dropped, yok_sayfada, kosullu = [], 0, 0, 0
     for row in rows:
         if not _appears_in_text(row.monthly_rate_percent, text):
             dropped += 1
+            yok_sayfada += 1
             logger.warning(
                 "loan_rates_llm/%s: %%%.2f sayfada bulunamadı — kayıt atıldı",
                 code, row.monthly_rate_percent,
@@ -447,16 +621,39 @@ def _ground(rows, text: str, code: str) -> tuple[list, int]:
             continue
         if not row.available_to_all:
             dropped += 1
+            kosullu += 1
             logger.info(
                 "loan_rates_llm/%s: %%%.2f herkese açık değil, atlandı — %s",
                 code, row.monthly_rate_percent, (row.why or "gerekçe yok")[:100],
             )
             continue
+        # Demirleme DENETİMİ — eleme değil, uyarı. Model oranı kendi
+        # cümlesine bağlayamadıysa erişilebilirlik kararı da şüphelidir.
+        # Kaydı burada ATMIYORUZ: alıntı boş gelmesi (şema varsayılanı)
+        # tek başına oranın yanlış olduğunu göstermez ve sessizce veri
+        # kaybetmektense görünür bir uyarı bırakmak doğru.
+        if row.rate_sentence and not _appears_in_text(
+            row.monthly_rate_percent, row.rate_sentence
+        ):
+            logger.warning(
+                "loan_rates_llm/%s: %%%.2f alıntılanan cümlede geçmiyor — "
+                "erişilebilirlik kararı şüpheli: %r",
+                code, row.monthly_rate_percent, row.rate_sentence[:120],
+            )
         kept.append(row)
-    return kept, dropped
+    return kept, _Eleme(dropped, yok_sayfada, kosullu)
 
 
 def _load_banks() -> dict[str, dict]:
+    """Envanterden aktif sayfaları okur.
+
+    ANAHTAR YAML ANAHTARIDIR, kurum kodu DEĞİL. Eskiden kurum koduyla
+    anahtarlanıyordu ve bu, aynı bankaya ikinci bir sayfa eklemeyi sessizce
+    imkânsız kılıyordu: `denizbank_ihtiyac` ile `denizbank_tasit` aynı
+    "DENIZBANK" anahtarına yazıldığı için ikincisi birincisini eziyordu —
+    yani konut/taşıt sayfaları hiç çekilmiyordu ve bunu gösteren bir hata
+    da yoktu. Kurum kodu artık kaydın İÇİNDE taşınıyor.
+    """
     from config.loader import load_sources
 
     out: dict[str, dict] = {}
@@ -464,7 +661,12 @@ def _load_banks() -> dict[str, dict]:
         entry = entry or {}
         if entry.get("status") != "active" or not entry.get("url"):
             continue
-        out[entry.get("institution", key.upper())] = {"key": key, "url": entry["url"]}
+        out[key] = {
+            "key": key,
+            "url": entry["url"],
+            "institution": entry.get("institution", key.upper()),
+            "loan_type_hint": entry.get("loan_type_hint"),
+        }
     return out
 
 

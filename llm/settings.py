@@ -10,6 +10,8 @@ seçildi (kullanıcı isteği, 2026-08-24).
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -17,6 +19,8 @@ from contextvars import ContextVar
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 def _int(name: str, default: int) -> int:
@@ -63,6 +67,46 @@ LLM_AGENT_MAX_CALLS_PER_RUN = _int("LLM_AGENT_MAX_CALLS_PER_RUN", 8)
 
 # İstek zaman aşımı — asılı kalan bir çağrı hem koşuyu hem faturayı bekletir.
 LLM_TIMEOUT_SECONDS = _int("LLM_TIMEOUT_SECONDS", 45)
+
+
+def _json_obj(name: str, default: dict) -> dict:
+    """.env'den JSON nesne okur; bozuksa varsayılana düşer ve UYARIR.
+
+    Sessizce boş sözlüğe düşmek en kötüsü olurdu: `enable_thinking` gibi bir
+    anahtar kaybolduğunda hiçbir hata görünmez, yalnızca fatura kabarır.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return dict(default)
+    try:
+        value = json.loads(raw)
+    except ValueError as exc:
+        logger.warning("%s ayrıştırılamadı (%s) — varsayılan kullanılıyor", name, exc)
+        return dict(default)
+    if not isinstance(value, dict):
+        logger.warning("%s bir JSON nesnesi olmalı — varsayılan kullanılıyor", name)
+        return dict(default)
+    return value
+
+
+# SAĞLAYICIYA ÖZEL EK GÖVDE ALANLARI — OpenAI şemasında olmayan parametreler.
+#
+# NEDEN VAR: Qwen'in (Alibaba Model Studio) OpenAI-uyumlu uç noktasında
+# DÜŞÜNME MODU VARSAYILAN OLARAK AÇIK ve çıkarım işinde saf israf.
+# 2026-09-02'de ölçüldü — aynı önemsiz çıkarım isteği:
+#     qwen3.7-plus  düşünme açık : 1445 çıktı tokeni (1376'sı akıl yürütme)
+#     qwen3.7-plus  düşünme kapalı:   41 çıktı tokeni
+# Otuz küsur banka × her koşu ile bu, faturanın tamamını yakan fark.
+#
+# Üstelik sessiz bir BOZULMA riski de var: akıl yürütme tokenleri
+# `max_tokens` bütçesinden yeniyor, yani düşünme açıkken model JSON'u
+# yazmaya sıra gelmeden kesilebiliyor ve çağrı "yanıt ayrıştırılamadı" diye
+# başarısız oluyor — token yanmış, sonuç yok.
+#
+# Ayar genel tutuldu (sağlayıcıya özel bayrak yerine serbest JSON) çünkü bu
+# modülün tamamı "sağlayıcı .env'den takas edilir" ilkesi üzerine kurulu;
+# Gemini'ye dönülürse bu alan boşaltılır, kod değişmez.
+LLM_EXTRA_BODY = _json_obj("LLM_EXTRA_BODY", {})
 
 
 # --- maliyet tahmini -------------------------------------------------------
@@ -123,6 +167,7 @@ OVERRIDABLE = (
     "LLM_MAX_CALLS_PER_RUN",
     "LLM_AGENT_MAX_CALLS_PER_RUN",
     "LLM_TIMEOUT_SECONDS",
+    "LLM_EXTRA_BODY",
     "LLM_PRICE_INPUT_PER_1M",
     "LLM_PRICE_OUTPUT_PER_1M",
 )
@@ -172,6 +217,7 @@ def reload_from_env(path: str | None = None) -> None:
         LLM_MAX_CALLS_PER_RUN=_int("LLM_MAX_CALLS_PER_RUN", 1),
         LLM_AGENT_MAX_CALLS_PER_RUN=_int("LLM_AGENT_MAX_CALLS_PER_RUN", 8),
         LLM_TIMEOUT_SECONDS=_int("LLM_TIMEOUT_SECONDS", 45),
+        LLM_EXTRA_BODY=_json_obj("LLM_EXTRA_BODY", {}),
         LLM_PRICE_INPUT_PER_1M=_float("LLM_PRICE_INPUT_PER_1M", None),
         LLM_PRICE_OUTPUT_PER_1M=_float("LLM_PRICE_OUTPUT_PER_1M", None),
     )

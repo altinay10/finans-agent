@@ -193,16 +193,45 @@ def test_persist_keeps_the_lowest_rate_when_a_page_lists_several(db):
 # ------------------------------------------------------- yapılandırma ----
 
 def test_only_active_banks_are_collected():
-    """`unverified`/`blocked` bankalar listeye girmemeli.
+    """Yalnızca `active` kaynaklar çekilmeli.
 
-    İş Bankası WAF arkasında, TEB ve Garanti'nin sayfasında oran yok:
-    üçü de kapalı ve toplayıcı onlara hiç istek atmamalı.
+    İş Bankası WAF arkasında (2026-09-02'de yeniden doğrulandı: engel
+    sayfası dönüyor) ve envanterde kapalı; toplayıcı ona istek ATMAMALI.
+
+    Bankayı ADIYLA sabitlemiyoruz: TEB ve Garanti bir ara kapalıydı, sonra
+    çalışan BAŞKA bir URL bulununca açıldılar. Testin sabitlemesi gereken
+    şey banka listesi değil, `status` filtresinin uygulandığı.
+    """
+    from collectors.loan_rates_llm import _load_banks
+    from config.loader import load_sources
+
+    banks = _load_banks()
+    kurumlar = {c["institution"] for c in banks.values()}
+    assert "ISBANK" not in kurumlar
+
+    envanter = load_sources()["loan_llm_endpoints"]
+    kapali = {k for k, v in envanter.items() if (v or {}).get("status") != "active"}
+    assert kapali & set(banks) == set(), "kapalı kaynak listeye sızdı"
+    assert len(banks) >= 10, "envanter beklenenden dar"
+
+
+def test_one_bank_can_have_several_pages():
+    """Aynı bankaya ihtiyaç/konut/taşıt sayfaları AYRI AYRI eklenebilmeli.
+
+    Envanter eskiden kurum koduyla anahtarlanıyordu: ikinci sayfa birinciyi
+    sessizce eziyor, yani konut ve taşıt sayfaları hiç çekilmiyordu ve bunu
+    gösteren bir hata da olmuyordu.
     """
     from collectors.loan_rates_llm import _load_banks
 
     banks = _load_banks()
-    assert set(banks) == {"HALKBANK", "QNB", "DENIZBANK", "ING"}
-    assert "ISBANK" not in banks
+    kurum_sayisi: dict[str, int] = {}
+    for cfg in banks.values():
+        kurum_sayisi[cfg["institution"]] = kurum_sayisi.get(cfg["institution"], 0) + 1
+    # Anahtarlar YAML anahtarı olduğu için sayfa sayısı kurum sayısından
+    # büyük olabilir; eski kurulumda bu yapısal olarak imkânsızdı.
+    assert len(banks) == sum(kurum_sayisi.values())
+    assert all(cfg["url"].startswith("http") for cfg in banks.values())
 
 
 def test_visible_text_strips_scripts_and_tags():
@@ -280,3 +309,91 @@ def test_a_general_rate_survives_even_when_the_page_is_a_campaign_page():
         sayfa, "HALKBANK",
     )
     assert [r.monthly_rate_percent for r in kept] == [4.19]
+
+
+# ---------------------------------------------- modele verilen girdi -------
+#
+# Bu bölümdeki hataların hepsi CANLI gözlendi (2026-09-02/03) ve hiçbiri
+# modelin hatası değildi: modele yanlış ya da bozuk metin veriyorduk.
+
+
+def test_section_headings_survive_flattening():
+    """Bölüm başlıkları metinde KALMALI.
+
+    DenizBank sayfasında başlıklar silinince "emeklilere özel borç transfer
+    kredisi" cümlesi, iki bölüm sonraki GENEL %2,99 oranının hemen yanına
+    düşüyordu; denenen altı modelin altısı da oranı bu paragrafa bağlayıp
+    eledi. Başlık, modelin "burada yeni bir ürün başlıyor" diyebilmesi için
+    metinde görünür olmak zorunda.
+    """
+    html = "<p>emeklilere özeldir.</p><h2>Özellikleri</h2><p>%2,99 ile başvurun</p>"
+    text = _visible_text(html)
+    assert "### Özellikleri" in text
+    assert text.index("### Özellikleri") < text.index("%2,99")
+
+
+def test_html_entities_are_decoded():
+    """Varlıklar çözülmeli — model bozuk Türkçeden oran çıkaramıyor.
+
+    CepteTEB sayfası modele "m&uuml;şterisi değilseniz" diye gidiyordu.
+    Elle kurulmuş iki varlıklı bir liste (&nbsp; ve &amp;) geri kalan
+    yüzlerce varlığı sessizce metinde bırakıyordu.
+    """
+    text = _visible_text("<p>Hen&uuml;z m&uuml;şteri de&#287;ilseniz %2,99</p>")
+    assert "&uuml;" not in text and "Henüz" in text and "%2,99" in text
+
+
+def test_window_starts_at_the_rates_own_section():
+    """Pencere, oranın KENDİ bölümünden başlamalı — bir öncekinden değil."""
+    from collectors.loan_rates_llm import _rate_regions
+
+    text = _visible_text(
+        "<p>" + "Bu ürün yalnızca emeklilere yöneliktir. " * 6 + "</p>"
+        "<h2>Özellikleri</h2><p>%2,99 oranıyla herkes başvurabilir.</p>"
+    )
+    odak = _rate_regions(text)
+    assert "%2,99" in odak
+    assert "emeklilere" not in odak, "önceki bölüm pencereye sızdı"
+
+
+def test_drop_reasons_are_reported_separately():
+    """"Sayfada yok" ile "herkese açık değil" AYNI ŞEY DEĞİL.
+
+    İkisi tek sayıya indirilip "sayfada bulunamadı" diye raporlanıyordu.
+    Odeabank'ta yedi oranın yedisi de sayfada gerçekten yazıyordu; hepsi
+    "ön onaylı müşterilere" özel olduğu için elenmişti. Yanlış etiket,
+    olmayan bir uydurma hatasının peşine düşürdü.
+    """
+    from collectors.loan_rates_llm import _ground
+
+    rows = [
+        _satir(9.99, True, "sayfada olmayan oran"),
+        _satir(3.29, False, "yalnızca ön onaylı müşterilere"),
+    ]
+    _kept, elenen = _ground(rows, "kredi %3,29 ile", "ODEABANK")
+    assert elenen == 2
+    assert elenen.yok_sayfada == 1 and elenen.kosullu == 1
+    assert "sayfada bulunamadı" in elenen.aciklama()
+    assert "herkese açık değil" in elenen.aciklama()
+
+
+def test_loan_type_hint_is_injected_without_a_format_placeholder():
+    """Tür ipucu prompt'a girmeli ama `.format()` tuzağı KURMAMALI.
+
+    Prompt'a `{hint}` gibi bir yer tutucu koymak, prompt'u doğrudan
+    `.format(html=...)` ile kullanan her çağrı yolunu KeyError ile
+    patlatırdı.
+    """
+    from collectors.loan_rates_llm import LlmLoanRateCollector
+
+    banks = {
+        "x_tasit": {"key": "x", "url": "http://e", "institution": "X",
+                    "loan_type_hint": "vehicle"},
+        "y": {"key": "y", "url": "http://e", "institution": "Y",
+              "loan_type_hint": None},
+    }
+    kol = LlmLoanRateCollector(banks=banks)
+    ipuclu = kol._prompt_for("x_tasit")
+    assert "TAŞIT" in ipuclu and "vehicle" in ipuclu
+    assert kol._prompt_for("y") == kol.PROMPT      # ipucu yoksa dokunma
+    ipuclu.format(html="<p>x</p>")                 # patlamamalı

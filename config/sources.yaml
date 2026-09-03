@@ -17,6 +17,15 @@ institutions:
   - {code: ENPARA,       name: "Enpara (QNB)",           kind: bank}
   - {code: EMLAKKATILIM, name: "Emlak Katılım",          kind: participation}
   - {code: VAKIFBANK,    name: "VakıfBank",              kind: bank}
+  # Agent toplayıcısının beslediği kurumlar. LoanRate.institution bir
+  # FOREIGN KEY (institutions.code) — burada tanımlı olmayan bir kod
+  # yazmak, SQLite'ta FK zorlaması açıldığı gün sessizce kırılırdı.
+  - {code: DENIZBANK,    name: "DenizBank",              kind: bank}
+  - {code: ING,          name: "ING Bank",               kind: bank}
+  - {code: QNB,          name: "QNB Bank",               kind: bank}
+  - {code: ODEABANK,     name: "Odeabank",               kind: bank}
+  - {code: FIBABANKA,    name: "Fibabanka",              kind: bank}
+  - {code: ANADOLUBANK,  name: "Anadolubank",            kind: bank}
 
 fx_endpoints:
   # last_verified alanı elle doğrulama tarihidir — 6 aydan eskiyse şüpheyle yaklaş.
@@ -571,6 +580,104 @@ loan_llm_endpoints:
 # kaynağı sources.yaml'da yazmıyordu — panelin "bu veri nereden geliyor"
 # sorusunu cevaplayamamasının sebeplerinden biri buydu.
 # ---------------------------------------------------------------------------
+
+  # --- 2026-09-02'de canlı yoklanarak eklenenler --------------------------
+  # Hepsi tek tek çekildi: HTTP 200, engel sayfası değil ve metninde aylık
+  # oran geçiyor. Yoklamayı geçemeyenler (İş Bankası/Yapı Kredi/Kuveyt Türk
+  # WAF arkasında; Akbank/TEB/Şekerbank/Vakıf Katılım oranı JavaScript ile
+  # basıyor) BİLEREK eklenmedi — statik çekimle veri vermezler.
+  #
+  # NOT: anahtarlar kurum koduna DEĞİL sayfaya göre; bir bankanın ihtiyaç,
+  # konut ve taşıt sayfaları ayrı satırlar (bkz. _load_banks docstring'i).
+
+  garantibbva_ihtiyac:
+    url: "https://www.garantibbva.com.tr/krediler/bireysel-ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: GARANTIBBVA
+    last_verified: 2026-09-02
+    note: "Odak metni ~1.3 KB. Garanti'nin ELLE ayrıştırılan uç noktası kapalı; agent bu sayfadan besliyor."
+
+  odeabank_ihtiyac:
+    url: "https://www.odeabank.com.tr/ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: ODEABANK
+    last_verified: 2026-09-02
+    note: "Odak metni ~2.4 KB."
+
+  fibabanka_ihtiyac:
+    url: "https://www.fibabanka.com.tr/bireysel/krediler/ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: FIBABANKA
+    last_verified: 2026-09-02
+    note: "Sayfada %5,24 / %5,30 / %5,38 gibi kademeli oranlar yazıyor."
+
+  anadolubank_ihtiyac:
+    url: "https://www.anadolubank.com.tr/bireysel/krediler/ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: ANADOLUBANK
+    last_verified: 2026-09-02
+    note: "Odak metni ~0.7 KB; sayfada %3,09 geçiyor."
+
+  anadolubank_konut:
+    url: "https://www.anadolubank.com.tr/bireysel/krediler/konut-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: ANADOLUBANK
+    loan_type_hint: housing
+    last_verified: 2026-09-02
+    note: "Konut sayfası; tür ipucu veriliyor (sayfa banner'ı ürün adı taşımıyor)."
+
+  cepteteb_ihtiyac:
+    url: "https://www.cepteteb.com.tr/ihtiyac-kredisi"
+    type: llm_html
+    auth: none
+    status: blocked
+    institution: TEB
+    last_verified: 2026-09-02
+    blocked_reason: >
+      Sayfada FAİZ ORANI YOK. Statik metnin tamamında geçen tek oran %0,5 ve
+      o da kredi TAHSİS ÜCRETİ; "Aylık Akdi Faiz" sütunu JavaScript ile
+      dolduruluyor ve çekimde boş geliyor (2026-09-02'de doğrulandı).
+      Önce HTML varlıklarının çözülmemesinden şüphelenildi — o ayrı bir
+      hataydı, düzeltildi (bkz. _visible_text) ama bu sayfayı kurtarmadı.
+
+  denizbank_tasit:
+    url: "https://www.denizbank.com/krediler/bireysel-bankacilik/tasit-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: DENIZBANK
+    loan_type_hint: vehicle
+    last_verified: 2026-09-02
+    note: >
+      Taşıt sayfası; ihtiyaç sayfasıyla AYNI kurumun ikinci kaydı. Oran bir
+      tabloda ("100.000 TL | 48 Ay | 4.14%") ve satırda ürün adı geçmediği
+      için model türü personal sanıyordu — loan_type_hint bunu düzeltiyor.
+
+  ziraat_fiyat_oranlar:
+    url: "https://www.ziraatbank.com.tr/tr/fiyatlar-ve-oranlar"
+    type: llm_html
+    auth: none
+    status: blocked
+    institution: ZIRAAT
+    last_verified: 2026-09-02
+    blocked_reason: >
+      Sayfada KREDİ ORANI YOK. Adı "Fiyatlar ve Oranlar" olduğu için
+      envanterin en zengin kaynağı sanılmıştı (odak metni 6 KB); 2026-09-02'de
+      başlıkları tek tek okundu: mevduat, altın, döviz, yatırım fonu, tahvil,
+      repo ve kira sertifikası oranları var, kredi bölümü yok. Agent'ın boş
+      dönmesi DOĞRUYDU. Kredi oranları için Ziraat'in ürün sayfaları
+      gerekiyor; onlar da oranı statik HTML'de yayınlamıyor.
+
 profit_share_endpoints:
   emlakkatilim:
     url: "https://www.emlakkatilim.com.tr/tr/bireysel/hesaplar/katilma-hesaplari/katilma-hesabi"
