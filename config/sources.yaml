@@ -720,11 +720,39 @@ loan_llm_endpoints:
     url: "https://www.anadolubank.com.tr/bireysel/krediler/konut-kredisi"
     type: llm_html
     auth: none
-    status: active
+    status: blocked
     institution: ANADOLUBANK
     loan_type_hint: housing
-    last_verified: 2026-09-02
-    note: "Konut sayfası; tür ipucu veriliyor (sayfa banner'ı ürün adı taşımıyor)."
+    last_verified: 2026-09-05
+    blocked_reason: >-
+      Sayfa KONUT ORANI YAYINLAMIYOR. 2026-09-05'te ölçüldü: bu sayfanın
+      çekilen odak metni, ihtiyaç kredisi sayfasının metniyle BİREBİR AYNI —
+      ikisi de sitenin her sayfasında duran "350.000 TL'ye kadar %3,09'dan
+      başlayan" İHTİYAÇ kredisi banner'ından ibaret. Yani sayfada konut
+      oranı yok; model doğru davranıp `personal` döndürüyordu.
+      Sonuç sessiz kayıptı: persist() aynı (kurum, tür) için en düşük oranı
+      bıraktığı için bu satır Anadolubank'ın ihtiyaç satırıyla birleşip
+      kayboluyor, kaynak ise her gün "ok, 1 satır" diyordu. Artık ipucuyla
+      uyuşmayan tür kayda geçiyor (bkz. collectors/loan_rates_llm.py).
+      Anadolubank konut oranını statik olarak yayınlarsa yeniden açılabilir.
+
+  qnb_konut:
+    url: "https://www.qnb.com.tr/standart-konut-kredisi"
+    type: llm_html
+    auth: none
+    status: active
+    institution: QNB
+    loan_type_hint: housing
+    last_verified: 2026-09-05
+    note: >-
+      Konut kredisi maliyet tablosunu STATİK olarak yayınlıyor: 100.000 TL
+      için 60 ve 120 ay vadede %2,99 aylık faiz, yıllık toplam maliyet
+      oranlarıyla birlikte. 2026-09-05'te odak metninde doğrulandı (3.4 KB).
+      Envanterdeki `qnb` kaydı yalnızca İHTİYAÇ sayfasıdır ve orada tüm
+      oranlar kampanyalı olduğu için eleniyor; bu ayrı bir sayfadır.
+      Sayfadaki dipnotlar (sigortalı kullandırım, ilk ev alımı) koşul
+      içeriyor — herkese açıklık kararını agent `available_to_all` ile
+      veriyor, bu satır onu baypas etmez.
 
   cepteteb_ihtiyac:
     url: "https://www.cepteteb.com.tr/ihtiyac-kredisi"

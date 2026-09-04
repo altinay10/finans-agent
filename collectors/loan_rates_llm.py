@@ -294,6 +294,40 @@ class LlmLoanRateCollector(Collector):
                 )
                 continue
 
+            # İPUCUYLA UYUŞMAYAN TÜR — sessizce yutulmasın.
+            #
+            # persist() aynı (kurum, tür) için EN DÜŞÜK oranı bırakıyor. Bir
+            # KONUT sayfasından `personal` satır dönerse o satır, aynı
+            # bankanın ihtiyaç satırıyla aynı anahtara düşüp sessizce
+            # kayboluyor: kaynak her gün "ok, 1 satır" diyor, tabloda konut
+            # kredisi hiç görünmüyor ve hiçbir yerde iz kalmıyor.
+            #
+            # Canlıda tam olarak bu oldu (2026-09-04): anadolubank_konut
+            # günlerdir "ok" dönüyordu ama Anadolubank'ın konut satırı hiç
+            # oluşmadı. Sebebi sonradan anlaşıldı — o sayfanın çekilen
+            # metni, sitenin her sayfasında duran "%3,09 İHTİYAÇ kredisi"
+            # banner'ından ibaret; yani model DOĞRU davranıyordu, kaynak
+            # yanlıştı. Bunu görebilmek için kaydın kalması şart.
+            hint = (self.banks.get(code) or {}).get("loan_type_hint")
+            if hint:
+                uymayan = [r for r in kept if r.loan_type != hint]
+                if uymayan and len(uymayan) == len(kept):
+                    turler = sorted({r.loan_type for r in uymayan})
+                    logger.warning(
+                        "loan_rates_llm/%s: %s bekleniyordu, sayfadan %s geldi — "
+                        "kaynak yanlış ürünü gösteriyor olabilir",
+                        code, hint, ", ".join(turler),
+                    )
+                    self.record_source(
+                        code.lower(), phase="parse", status="empty",
+                        error=(
+                            f"{hint} kredisi bekleniyordu ama sayfadan yalnızca "
+                            f"{', '.join(turler)} oranı çıktı — sayfa o ürünün "
+                            f"oranını yayınlamıyor olabilir"
+                        ),
+                    )
+                    continue
+
             self.record_source(
                 code.lower(), phase="parse", status="ok", rows=len(kept),
                 error=(dropped.aciklama() if dropped else None),

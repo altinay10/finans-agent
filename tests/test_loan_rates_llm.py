@@ -397,3 +397,85 @@ def test_loan_type_hint_is_injected_without_a_format_placeholder():
     assert "TAŞIT" in ipuclu and "vehicle" in ipuclu
     assert kol._prompt_for("y") == kol.PROMPT      # ipucu yoksa dokunma
     ipuclu.format(html="<p>x</p>")                 # patlamamalı
+
+
+# ------------------------------------------ ipucuyla uyuşmayan ürün türü ----
+
+def test_housing_page_returning_only_personal_rates_is_not_folded_into_personal(db, monkeypatch):
+    """SESSİZ KAYIP REGRESYONU (canlıda yakalandı, 2026-09-04).
+
+    persist() aynı (kurum, tür) için EN DÜŞÜK oranı bırakıyor. Bir KONUT
+    sayfasından `personal` satır dönerse, o satır aynı bankanın ihtiyaç
+    satırıyla aynı anahtara düşüp sessizce kayboluyordu: kaynak her gün
+    "ok, 1 satır" diyor, konut kredisi tablosunda hiçbir şey görünmüyor ve
+    hiçbir yerde iz kalmıyordu.
+
+    Anadolubank'ın konut sayfası tam olarak böyleydi — çekilen metni,
+    sitenin her sayfasında duran "%3,09 İHTİYAÇ" banner'ıydı. Model DOĞRU
+    davranıyordu; kaynak yanlıştı. Bunu görebilmek için kayıt şart.
+    """
+    import llm.extract as llm_extract
+    import llm.settings as settings
+    from collectors.loan_rates_llm import LlmLoanRow
+
+    # conftest her testi KAPALI agent ile başlatıyor (kazara ağa çıkmasın).
+    # Burada parse yolunu sınıyoruz, extract zaten sahte.
+    monkeypatch.setattr(settings, "LLM_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(
+        llm_extract, "extract",
+        lambda *a, **k: [LlmLoanRow(
+            institution="ANADOLUBANK", loan_type="personal",
+            monthly_rate_percent=3.09, rate_sentence="aylık %3,09 ihtiyaç kredisi",
+            available_to_all=True,
+        )],
+    )
+    collector = LlmLoanRateCollector(banks={
+        "anadolubank_konut": {
+            "institution": "ANADOLUBANK", "loan_type_hint": "housing",
+            "url": "https://ornek/konut",
+        }
+    })
+    payload = json.dumps({
+        "anadolubank_konut": {"ok": True, "body": "aylık %3,09 ihtiyaç kredisi"}
+    }).encode()
+
+    with pytest.raises(ParseError):
+        collector.parse(payload)   # tek kaynak, hiç kayıt kalmadı
+
+    from sqlalchemy import select
+    from store.db import SessionLocal
+    from store.models import SourceRun
+    with SessionLocal() as s:
+        kayit = s.execute(
+            select(SourceRun).where(SourceRun.source == "anadolubank_konut")
+        ).scalars().all()
+    assert kayit, "uyuşmazlık kaydı yazılmalı"
+    assert kayit[-1].status == "empty"
+    assert "housing" in (kayit[-1].error or "")
+
+
+def test_a_hinted_page_that_does_return_the_right_type_is_kept(db, monkeypatch):
+    """Doğru türü döndüren sayfa elbette yazılmalı — kontrol fazla geniş olmasın."""
+    import llm.extract as llm_extract
+    import llm.settings as settings
+    from collectors.loan_rates_llm import LlmLoanRow
+
+    # conftest her testi KAPALI agent ile başlatıyor (kazara ağa çıkmasın).
+    # Burada parse yolunu sınıyoruz, extract zaten sahte.
+    monkeypatch.setattr(settings, "LLM_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(
+        llm_extract, "extract",
+        lambda *a, **k: [LlmLoanRow(
+            institution="QNB", loan_type="housing",
+            monthly_rate_percent=2.99, rate_sentence="konut kredisi aylık %2,99",
+            available_to_all=True,
+        )],
+    )
+    collector = LlmLoanRateCollector(banks={
+        "qnb_konut": {"institution": "QNB", "loan_type_hint": "housing",
+                      "url": "https://ornek/konut"}
+    })
+    kayitlar = collector.parse(json.dumps({
+        "qnb_konut": {"ok": True, "body": "konut kredisi aylık %2,99"}
+    }).encode())
+    assert [r.loan_type for r in kayitlar] == ["housing"]
