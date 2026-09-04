@@ -30,7 +30,19 @@ x-env: &env
   LLM_MAX_INPUT_CHARS: ${LLM_MAX_INPUT_CHARS:-8000}
   LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-2000}
   LLM_MAX_CALLS_PER_RUN: ${LLM_MAX_CALLS_PER_RUN:-1}
+  # Agent toplayıcısı banka BAŞINA bir çağrı yapıyor; varsayılan 8, envanterdeki
+  # aktif sayfa sayısından az. Geçirilmezse konteynerde ilk sekiz banka çekilir
+  # ve gerisi sessizce eksik kalır — panelde hata da görünmez.
+  LLM_AGENT_MAX_CALLS_PER_RUN: ${LLM_AGENT_MAX_CALLS_PER_RUN:-8}
   LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-45}
+  # SAĞLAYICIYA ÖZEL EK GÖVDE — Qwen kurulumunda ZORUNLU.
+  # Qwen'in OpenAI-uyumlu ucunda düşünme modu VARSAYILAN AÇIK; ölçüldü
+  # (2026-09-02): aynı istek düşünme açıkken 1445, kapalıyken 41 çıktı tokeni.
+  # Bu değişken geçirilmezse konteyner .env'deki {"enable_thinking": false}
+  # ayarını GÖREMEZ ve her koşu otuz kat fazlaya mal olur. Üstelik akıl
+  # yürütme tokenleri max_tokens bütçesini yiyip JSON'u yarıda kestiği için
+  # çağrılar "yanıt ayrıştırılamadı" ile de düşebilir.
+  LLM_EXTRA_BODY: ${LLM_EXTRA_BODY:-}
   # Boşsa maliyet "bilinmiyor" gösterilir; 0 yazmak "bedava" demek olurdu.
   LLM_PRICE_INPUT_PER_1M: ${LLM_PRICE_INPUT_PER_1M:-}
   LLM_PRICE_OUTPUT_PER_1M: ${LLM_PRICE_OUTPUT_PER_1M:-}
@@ -42,6 +54,10 @@ x-env: &env
   RETAIN_SCRAPE_RUN_DAYS: ${RETAIN_SCRAPE_RUN_DAYS:-180}
   RETAIN_SNAPSHOT_DAYS: ${RETAIN_SNAPSHOT_DAYS:-14}
   EVDS_API_KEY: ${EVDS_API_KEY:-}
+  # Boş bırakılırsa store/db.py volume içindeki SQLite dosyasını kullanır.
+  # .env'de tanımlıysa (ör. Postgres'e geçiş) konteynere de geçmeli, yoksa
+  # panel ve zamanlayıcı AYRI veritabanlarına bakar.
+  DB_URL: ${DB_URL:-}
 
 services:
   panel:
@@ -72,9 +88,37 @@ services:
     environment: *env
     entrypoint: ["python", "-u", "scheduler.py"]
     restart: unless-stopped
+    # Docker'ın varsayılan 10 saniyesi yetmiyor: SIGTERM geldiğinde
+    # zamanlayıcı ELİNDEKİ toplayıcıyı bitirip çıkıyor (bkz. scheduler.py
+    # _shutdown) ve VakıfBank mevduat matrisi tek başına ~60 sn sürüyor.
+    # Süre kısa kalırsa işleyici hiçbir işe yaramaz, konteyner yine SIGKILL
+    # ile yarıda kesilir.
+    stop_grace_period: 90s
     # `depends_on: panel` KALDIRILDI: toplama panelin ayakta olmasına
     # bağlı değil. Panel sağlıksızsa zamanlayıcının da beklemesi, veriyi
     # tamamen alakasız bir sebeple durdururdu.
+    # NEDEN AYRI BİR HEALTHCHECK: imajdaki HEALTHCHECK Streamlit'in
+    # /_stcore/health ucunu yokluyor (bkz. Dockerfile). Bu konteynerde HTTP
+    # sunucusu YOK — entrypoint scheduler.py. Devralınan komut bu yüzden her
+    # turda curl(7) ile düşüyordu: konteyner veriyi sorunsuz toplarken Docker
+    # onu ~110 sn sonra kalıcı olarak "unhealthy" (Docker Desktop'ta SARI)
+    # işaretliyordu. Sürekli yanlış alarm, gerçek arızayı görünmez yapar.
+    #
+    # Doğru ölçüt zaten elimizde: zamanlayıcı 30 sn'de bir nabız atıyor ve
+    # nabız 180 sn'den bayatsa süreç ölmüş sayılıyor (store/heartbeat.py).
+    # host karşılaştırması nabzın BU konteynerden geldiğini doğrular; sağlık
+    # komutu konteynerin içinde koştuğu için hostname aynıdır. Bu olmadan,
+    # başka bir makinedeki canlı zamanlayıcının nabzı bu ölü konteyneri
+    # sağlıklı gösterirdi.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket, sys; from store import heartbeat; s = heartbeat.read(); sys.exit(0 if s and s['alive'] and s['host'] == socket.gethostname() else 1)"]
+      interval: 30s
+      timeout: 15s
+      # Nabız ayrı bir iş parçacığından atıldığı için açılıştaki uzun toplama
+      # turunu beklemez (bkz. heartbeat.start_beating); 60 sn yalnızca
+      # python/sqlalchemy açılış payı.
+      start_period: 60s
+      retries: 3
 
   # Elle çalıştırma: docker compose run --rm worker all
   worker:
@@ -85,9 +129,28 @@ services:
     environment: *env
     entrypoint: ["python", "worker.py"]
     profiles: ["tools"]
+    # Tek seferlik iş — servis değil. İmajdaki Streamlit sağlık komutu burada
+    # da anlamsız ve hep başarısız; kapatılmazsa `compose run` sırasında
+    # konteyner boş yere "unhealthy" görünür.
+    healthcheck:
+      disable: true
 
 volumes:
   # Adlandırılmış volume: bind mount'ta konteyner kullanıcısı (uid 10001)
-  # host dizinine yazamayabiliyor. Yedek almak için:
-  #   docker run --rm -v finans-data:/d -v "$PWD":/b alpine tar czf /b/finans-data.tgz -C /d .
+  # host dizinine yazamayabiliyor.
+  #
+  # GERÇEK VOLUME ADI compose proje önekini taşır. Yedek almak için:
+  #   docker run --rm -v finansalverihesaplamaajan_finans-data:/d \
+  #     -v "$PWD":/b alpine tar czf /b/finans-data.tgz -C /d .
+  # ("finans-data" diye yazmak BOŞ bir volume yaratıp onu yedekler.)
+  #
+  # VAR OLAN BİR VERİTABANINI TAŞIRKEN: kopyaladıktan sonra
+  # `scheduler_heartbeat` satırını SİLİN.
+  #   docker run --rm -v finansalverihesaplamaajan_finans-data:/d \
+  #     --entrypoint python finans-agent:latest \
+  #     -c "import sqlite3;c=sqlite3.connect('/d/finans_agent.db');c.execute('DELETE FROM scheduler_heartbeat');c.commit()"
+  # Yoksa nabız ESKİ HOST'un adını taşır; konteyner zamanlayıcısı "başkası
+  # çalışıyor" deyip çıkar ve nabız bayatlayana kadar (180 sn,
+  # store/heartbeat.STALE_AFTER_SECONDS) yeniden başlar durur. Kendini
+  # toparlar ama Docker Desktop'ta üç dakika "Restarting" görünür.
   finans-data:

@@ -209,3 +209,35 @@ def test_every_dataset_has_a_collector_mapping():
     for dataset, collectors in DATASET_COLLECTORS.items():
         for name in collectors:
             assert name in known, f"{dataset}: '{name}' diye bir toplayıcı yok"
+
+
+# ---------------------------------------------------------------- caveat ----
+
+
+def test_source_caveat_surfaces_measurement_basis_warning():
+    """Aynı tabloda farklı ÖLÇÜM TABANI varsa panel bunu söylemeli.
+
+    CepteTEB'in herkese açık ucu nakit/efektif kuru veriyor (makas %9);
+    paneldeki diğer bankalar döviz HESABI kuru yayınlıyor (%2 dolayında).
+    Sayı yanlış değil, kıyas yanlış olur — bu yüzden uyarı kullanıcıya
+    gösterilen bir alanda (`caveat`) tutuluyor, geliştirici notunda değil.
+    """
+    from config.loader import clear_cache, source_caveat
+
+    clear_cache()
+    caveat = source_caveat("fx_endpoints", "TEB")
+    assert caveat, "TEB kur satırının ölçüm tabanı uyarısı kaybolmuş"
+    # str.lower() ile aramak TÜRKÇE'DE TUZAK: "NAKİT".lower() Python'da
+    # "naki\u0307t" üretir (İ -> i + birleşen nokta), yani "nakit" ile
+    # eşleşmez. Metin zaten küçük harfli parçalarla sınanıyor.
+    assert "hesabı kuru değil" in caveat
+    assert "makas" in caveat
+    # Uyarı yalnızca gerektiği yerde; her kaynağa yapıştırılmamalı.
+    assert source_caveat("fx_endpoints", "AKBANK") is None
+
+
+def test_source_caveat_is_none_for_unknown_institution():
+    from config.loader import clear_cache, source_caveat
+
+    clear_cache()
+    assert source_caveat("fx_endpoints", "OLMAYAN_BANKA") is None

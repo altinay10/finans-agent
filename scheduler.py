@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import logging
 import os
-import time
+import signal
+import threading
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
@@ -85,6 +86,34 @@ MAX_AGE_HOURS: dict[str, float] = {
 
 CATCHUP_INTERVAL_MINUTES = int(os.environ.get("CATCHUP_INTERVAL_MINUTES", "30"))
 TICK_SECONDS = 20
+
+# DÜZGÜN KAPANMA — konteynerde bu süreç PID 1 olarak koşuyor ve PID 1'de
+# sinyallerin VARSAYILAN davranışı çekirdek tarafından YOK SAYILIR; işleyici
+# kurulmadıkça SIGTERM hiçbir şey yapmaz. Sonuç canlıda görüldü:
+# `docker compose stop` 10 saniyelik süreyi baştan sona bekleyip konteyneri
+# SIGKILL ile öldürüyordu (çıkış kodu 137) — hem de toplama turunun tam
+# ortasında olabilirdi. `run.py` da çocuğu terminate() ile durduruyor;
+# işleyici olmadan orada da aynı sert kesme yaşanıyordu.
+#
+# Bayrak time.sleep yerine Event.wait ile bekletir: sinyal geldiği anda
+# uykudan çıkılır, 20 saniyelik tur sonu beklenmez.
+_shutdown = threading.Event()
+
+
+def _install_signal_handlers() -> None:
+    def _stop(signum, _frame):
+        logger.info("sinyal alındı (%s) — tur bitince kapanılıyor", signum)
+        _shutdown.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _stop)
+        except ValueError:
+            # signal.signal yalnızca ana iş parçacığında çalışır. Zamanlayıcı
+            # bir gün başka bir sürecin içinden iş parçacığı olarak
+            # başlatılırsa burada patlamak yerine sessizce eski davranışa
+            # dönmek doğru: kapanmayı o zaman dış süreç yönetir.
+            logger.debug("%s işleyicisi kurulamadı (ana iş parçacığı değil)", sig)
 
 
 def _run(name: str, trigger: str) -> bool:
@@ -197,6 +226,7 @@ def due_by_staleness(now_utc: datetime | None = None) -> list[str]:
 
 
 def main() -> None:
+    _install_signal_handlers()
     init_db()
 
     # Aynı anda İKİ zamanlayıcı koşmamalı: tek konteynerli kurulumda panel
@@ -230,6 +260,9 @@ def main() -> None:
         if acilista:
             logger.info("açılışta bayat olanlar çekiliyor: %s", acilista)
             for name in acilista:
+                if _shutdown.is_set():
+                    logger.info("kapanma istendi — açılış turu yarıda bırakıldı")
+                    break
                 _run(name, "startup")
         else:
             logger.info("açılışta çekilecek bayat toplayıcı yok — plan bekleniyor")
@@ -247,7 +280,7 @@ def main() -> None:
     # zamanlayıcının işi (bkz. store/retention.py).
     next_purge = datetime.now(timezone.utc)
 
-    while True:
+    while not _shutdown.is_set():
         now = datetime.now(ISTANBUL)
         now_utc = datetime.now(timezone.utc)
 
@@ -263,6 +296,8 @@ def main() -> None:
         stamp = (now.hour, now.minute)
         if stamp != last_fired:
             for name in due_by_schedule(now):
+                if _shutdown.is_set():
+                    break
                 _run(name, "schedule")
             last_fired = stamp
 
@@ -271,6 +306,8 @@ def main() -> None:
             if stale:
                 logger.warning("tazelik sınırını aşanlar yeniden deneniyor: %s", stale)
                 for name in stale:
+                    if _shutdown.is_set():
+                        break
                     _run(name, "catchup")
             next_catchup = now_utc + timedelta(minutes=CATCHUP_INTERVAL_MINUTES)
 
@@ -278,7 +315,9 @@ def main() -> None:
             purge()
             next_purge = now_utc + timedelta(days=1)
 
-        time.sleep(TICK_SECONDS)
+        _shutdown.wait(TICK_SECONDS)
+
+    logger.info("zamanlayıcı düzgün kapandı")
 
 
 if __name__ == "__main__":

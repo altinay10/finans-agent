@@ -944,3 +944,173 @@ def test_emlak_profit_share_sanity_requires_try_table():
     ]
     with pytest.raises(SanityCheckError):
         EmlakKatilimProfitShareCollector().sanity_check(only_usd)
+
+
+# ------------------------------------------- Halkbank / Ziraat mevduat ----
+#
+# Fixture'lar 2026-09-04'te canlı uç noktalardan alındı.
+
+
+def test_halkbank_deposit_parses_real_matrix():
+    from collectors.deposit_rates import HalkbankDepositParser
+
+    records = HalkbankDepositParser().parse(_fixture("halkbank_deposit.json"))
+    assert records, "Halkbank mevduat matrisi boş çıktı"
+    assert {r.institution for r in records} == {"HALKBANK"}
+    assert {r.currency for r in records} == {"TRY"}
+    for r in records:
+        assert 0 <= r.annual_rate <= 2.0
+        assert r.term_days > 0
+        assert r.amount_max is None or r.amount_max > r.amount_min
+        assert r.is_profit_share is False
+
+
+def test_halkbank_deposit_reads_internet_rates_not_branch_rates():
+    """Şube tablosuna geri dönülmesine karşı koruma.
+
+    interestType=1 (şube) TÜM vadelerde %5-6 döndürüyor; gerçek oran
+    internet/mobil kanalda (interestType=2) ve 1M TL / 32 gün için %35.
+    Biri kolay olsun diye tipi değiştirirse bu test patlar.
+    """
+    from collectors.deposit_rates import HalkbankDepositParser
+
+    assert HalkbankDepositParser.INTEREST_TYPE == 2
+    records = HalkbankDepositParser().parse(_fixture("halkbank_deposit.json"))
+    bir_milyon = [
+        r for r in records
+        if r.term_days == 32 and r.amount_min <= 1_000_000 <= (r.amount_max or float("inf"))
+    ]
+    assert bir_milyon, "32 gün / 1M TL kademesi bulunamadı"
+    assert max(r.annual_rate for r in bir_milyon) > 0.25
+
+
+def test_halkbank_deposit_skips_rows_without_day_based_term():
+    """"Birikimli Mevduat Hesabı" gibi ürünlerde minMaturity=0 gelir.
+
+    Bunlara uydurma bir vade yazmak panelin vade kıyasını bozar; parser
+    atlamalı. Satır fixture'a EKLENEREK sınanıyor: bugünkü internet
+    tablosunda böyle bir ürün yok (yalnızca şube tablosunda var), ama banka
+    onu buraya taşıdığı gün parser hazır olmalı.
+    """
+    from collectors.deposit_rates import HalkbankDepositParser
+
+    payload = json.loads(_fixture("halkbank_deposit.json"))
+    kademe_sayisi = len(payload["data"]["amountRangeList"])
+    payload["data"]["rateDetails"].append(
+        {
+            "minMaturity": 0,
+            "maxMaturity": 0,
+            "maturityRange": "Birikimli Mevduat Hesabı",
+            "amountRateList": [
+                {"minAmount": etiket.split("-")[0].strip(), "rate": "30,00"}
+                for etiket in payload["data"]["amountRangeList"]
+            ],
+        }
+    )
+    assert kademe_sayisi > 0
+    records = HalkbankDepositParser().parse(json.dumps(payload))
+    assert records, "gerçek satırlar da düşmemeli"
+    assert all(r.term_days > 0 for r in records)
+
+
+def test_halkbank_deposit_skips_row_when_tier_count_mismatches():
+    """Şema kayarsa oran YANLIŞ kademeye yazılmamalı — satır düşmeli."""
+    from collectors.deposit_rates import HalkbankDepositParser
+
+    payload = json.loads(_fixture("halkbank_deposit.json"))
+    for detail in payload["data"]["rateDetails"]:
+        detail["amountRateList"] = detail["amountRateList"][:-1]
+    assert HalkbankDepositParser().parse(json.dumps(payload)) == []
+
+
+def test_ziraat_deposit_parses_real_table():
+    from collectors.deposit_rates import ZiraatDepositParser
+
+    records = ZiraatDepositParser().parse(_fixture("ziraat_deposit.html"))
+    assert records, "Ziraat mevduat tablosu boş çıktı"
+    assert {r.institution for r in records} == {"ZIRAAT"}
+    assert {r.currency for r in records} == {"TRY"}
+    for r in records:
+        assert 0 <= r.annual_rate <= 2.0
+        assert r.term_days > 0
+        assert r.amount_max is None or r.amount_max > r.amount_min
+
+
+def test_ziraat_deposit_reads_internet_table_not_branch_table():
+    """2026-09-04'te canlıda yakalanan hatanın regresyon testi.
+
+    Sayfada aynı ad iki kez geçiyor: radio düğmesinin `id=` ve tabloyu saran
+    div'in `data-id=` özniteliği. `id=` ile eşleşen desen radio'yu bulup
+    ondan sonraki ilk tabloyu — yani ŞUBE tablosunu — okuyordu. Fixture her
+    iki bölümü de içerir; şube tablosunda 32 gün %5,00, internet tablosunda
+    %34,00.
+    """
+    from collectors.deposit_rates import ZiraatDepositParser
+
+    ham = _fixture("ziraat_deposit.html")
+    assert 'data-id="rdBranchVadeliTL"' in ham, "fixture şube bölümünü içermeli"
+    records = ZiraatDepositParser().parse(ham)
+    yuksek = [
+        r for r in records
+        if r.term_days == 32 and r.amount_min <= 1_000_000 <= (r.amount_max or float("inf"))
+    ]
+    assert yuksek, "32 gün / 1M TL kademesi bulunamadı"
+    assert max(r.annual_rate for r in yuksek) > 0.25, "şube tablosu okunmuş olabilir"
+
+
+def test_ziraat_deposit_raises_when_section_missing():
+    from collectors.deposit_rates import ZiraatDepositParser
+
+    with pytest.raises(ValueError):
+        ZiraatDepositParser().parse("<html><body><table><tr><td>yok</td></tr></table></body></html>")
+
+
+def test_deposit_number_helpers_handle_both_locales():
+    """Ziraat'in aynı tablosunda tutar Türkçe, oran İngilizce biçimde.
+
+    Tek biçim varsayan bir dönüştürücü ikisinden birini mutlaka bozar:
+    '%30.00' -> 3000 ya da '5.000' -> 5.0.
+    """
+    from collectors.deposit_rates import _rate_number, _tr_number
+
+    assert _tr_number("25.001,00") == 25001.0
+    assert _tr_number("5.000") == 5000.0          # binlik
+    assert _tr_number("30.00") == 30.0            # ondalık
+    assert _tr_number("0.001") == 0.001           # binlik ayracı 0'dan sonra gelmez
+    assert _tr_number("99.999.999.999,99") == 99999999999.99
+    assert _rate_number("%30.00") == 30.0
+    assert _rate_number("36,00") == 36.0
+    assert _rate_number("%5.000") == 5.0          # oranda binlik yoktur
+
+
+# ---------------------------------------------------- Kuveyt Türk kur ----
+
+
+def test_kuveytturk_fx_parses_real_payload():
+    from collectors.fx_banks import KuveytTurkParser
+
+    records = KuveytTurkParser().parse(_fixture("kuveytturk_fx.json"))
+    by_ccy = {r.currency: r for r in records}
+    assert set(by_ccy) == {"USD", "EUR"}
+    for r in records:
+        assert r.institution == "KUVEYTTURK"
+        assert 10 < r.buy < 200
+        assert r.buy <= r.sell
+        # Kaynak kendi kotasyon saatini yayınlamıyor; panel bunu "≈" ile
+        # işaretliyor. Bayrağı kaldırmak kullanıcıya olmayan bir kesinlik
+        # vaat ederdi.
+        assert r.quoted_at_is_estimated is True
+
+
+def test_kuveytturk_fx_ignores_metals_and_tl():
+    """Yanıt altın/gümüş/platin ve TL=1,0 satırlarını da içeriyor.
+
+    TL satırı (BuyRate=SellRate=1,0) SANITY_BAND'e takılmaz ama panelde
+    anlamsız bir "kur" satırı üretirdi.
+    """
+    from collectors.fx_banks import KuveytTurkParser
+
+    ham = _fixture("kuveytturk_fx.json")
+    assert '"CurrencyCode": "TL"' in ham or '"CurrencyCode":"TL"' in ham
+    records = KuveytTurkParser().parse(ham)
+    assert {r.currency for r in records} == {"USD", "EUR"}

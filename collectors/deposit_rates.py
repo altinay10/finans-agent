@@ -13,6 +13,14 @@ DEĞİL — her gün yeniden çekilir):
   TEB        — /services/GetMevduatFaizOranlari, tek JSON çağrısı
   ENPARA     — sunucu-render HTML, TL/USD/EUR sekmeleri tek sayfada
   YAPIKREDI  — /_ajaxproxy/.../GetCalculationTool, para birimi başına 1 çağrı
+  AKBANK     — /_layouts/15/Akbank/CalcTools/Ajax.aspx/GetMevduatFaiz, tek POST
+  HALKBANK   — webapi.halkbank.com.tr/api/deposit/depositinterestrates, tek POST
+  ZIRAAT     — /tr/fiyatlar-ve-oranlar, sunucu-render HTML tablosu
+
+Halkbank ve Ziraat'te İNTERNET ŞUBESİ oranı alınır, şube oranı değil: her
+iki bankada da şube tablosu tüm vadelerde %5-6'da sabitken gerçek oranlar
+online kanalda yayınlanıyor ve paneldeki diğer bankaların hepsi zaten kendi
+online oranını veriyor. Ayrıntı ilgili parser'ların docstring'inde.
 
 Yeni bir banka eklemek için adımlar:
 
@@ -41,6 +49,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from datetime import date, datetime, timezone
+from html import unescape
 
 import httpx
 from pydantic import BaseModel, model_validator
@@ -93,6 +102,53 @@ class BankDepositParser(ABC):
 
 # Bankalar TL'yi üç farklı kodla yazıyor: VakıfBank/TEB "TL", Yapı Kredi "YTL".
 _CURRENCY_MAP = {"TL": "TRY", "YTL": "TRY", "TRY": "TRY", "USD": "USD", "EUR": "EUR"}
+
+
+def _tr_number(raw: str) -> float:
+    """TUTAR metnini sayıya çevirir. '25.001,00' -> 25001.0, '5.000' -> 5000.0.
+
+    NEDEN İKİ BİÇİM: Ziraat'in aynı tablosunda tutar başlıkları Türkçe
+    ("1.000,00 - 4.999,99 TL") ama oranlar İngilizce ("%30.00") yazılıyor.
+    Tek biçim varsayan bir dönüştürücü bunlardan birini mutlaka bozar.
+
+    Kural: hem nokta hem virgül varsa Türkçe (nokta binlik). Yalnızca nokta
+    varsa, son noktadan sonra TAM 3 hane geliyorsa binlik ayracıdır
+    ('5.000' = 5000), aksi hâlde ondalık noktadır ('30.00' = 30.0).
+    Baştaki '0.' istisnası: binlik ayracı sıfırdan sonra gelmez, yani
+    '0.001' her zaman ondalıktır.
+
+    ORAN için bunu KULLANMA — _rate_number var; '%5.000' gibi bir oran
+    burada 5000 okunurdu.
+    """
+    s = raw.strip().replace("\xa0", " ").replace(" ", "")
+    if not s:
+        raise ValueError("boş sayı")
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+    elif "." in s:
+        _tam, _, son = s.rpartition(".")
+        if len(son) == 3 and not s.startswith("0."):
+            s = s.replace(".", "")
+    return float(s)
+
+
+def _rate_number(raw: str) -> float:
+    """ORAN metnini sayıya çevirir: '%30.00' -> 30.0, '36,00' -> 36.0.
+
+    Oranlarda binlik ayracı YOKTUR (0-200 aralığı), bu yüzden tek başına
+    duran nokta her zaman ondalıktır. _tr_number'ın binlik sezgisi burada
+    '%5.000' gibi bir değeri 5000 yapardı.
+    """
+    s = raw.replace("%", "").strip().replace("\xa0", " ").replace(" ", "")
+    if not s:
+        raise ValueError("boş oran")
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", ".")
+    return float(s)
 
 
 class VakifBankDepositParser(BankDepositParser):
@@ -484,12 +540,226 @@ class AkbankDepositParser(BankDepositParser):
         return records
 
 
+class HalkbankDepositParser(BankDepositParser):
+    """Halkbank: tek POST, tam TUTAR x VADE matrisi. Doğrulandı 2026-09-04.
+
+    Uç nokta sayfanın kendi `depositInterestRates()` çağrısı
+    (clientlib-dynamic-modules/28.*.js). İki parametre:
+
+      interestType  1 = Şube Oranları, 2 = İnternet/Mobil Şube ve Dialog
+      currCode      para birimi kodu
+
+    NEDEN interestType=2: Halkbank'ın ŞUBE tablosunda tüm vadeler %5-6'da
+    sabit; gerçek/rekabetçi oranlar (28-40 gün için %36'ya kadar) internet
+    ve mobil kanalda yayınlanıyor. Paneldeki diğer bankaların hepsi kendi
+    ONLINE oranını yayınlıyor (Enpara, CepteTEB, Yapı Kredi e-mevduat,
+    Akbank web kanalı kanalKodu=8); şube oranını koymak Halkbank'ı
+    kıyaslanamaz biçimde dibe yazardı.
+
+    NEDEN currCode=9000: bankanın KENDİ TL sayfası bu bileşeni
+    `data-currcodelist="9190"` ile besliyor ve 9190 TL DEĞİL — o kodla
+    dönen tablonun tamamı %0,01-%0,10 (kıymetli maden/YP seviyesi) ve
+    sayfa bu yüzden boş render ediliyor (2026-09-04'te tarayıcıda
+    doğrulandı: `.interestrates-list` boş kalıyor). Kodlar tek tek
+    denendi; TL tablosunu (en yüksek %36) yalnızca 9000 döndürüyor.
+    Yani bu parser bankanın sayfasındaki hatayı ATLAYIP kendi
+    servisinden doğru tabloyu alıyor.
+    """
+
+    institution = "HALKBANK"
+    URL = "https://webapi.halkbank.com.tr/api/deposit/depositinterestrates/"
+    REFERER = "https://www.halkbank.com.tr/"
+    INTEREST_TYPE = 2   # İnternet/Mobil Şube ve Dialog
+    CURR_CODE = "9000"  # TRY
+
+    # "10.000.001,00 - 99.999.999.999,99" gibi devasa üst sınırlar "sınır yok"
+    # demek; gerçek mevduat kademeleri milyonlar mertebesinde kalıyor.
+    _NO_UPPER_LIMIT = 1e10
+
+    def fetch(self) -> str:
+        resp = http.post(
+            self.URL,
+            headers={
+                **HEADERS,
+                "Content-Type": "application/json",
+                "Referer": self.REFERER,
+            },
+            json={"interestType": self.INTEREST_TYPE, "currCode": self.CURR_CODE},
+            timeout=25,
+        )
+        resp.raise_for_status()
+        return resp.text
+
+    @classmethod
+    def _bounds(cls, label: str) -> tuple[float, float | None]:
+        """'25.001,00 - 250.000,99' -> (25001.0, 250000.99)."""
+        parts = [x.strip() for x in label.split("-")]
+        if len(parts) != 2:
+            raise ValueError(f"kademe okunamadı: {label!r}")
+        low, high = (_tr_number(x) for x in parts)
+        return low, None if high >= cls._NO_UPPER_LIMIT else high
+
+    def parse(self, raw: str) -> list[DepositRateRecord]:
+        data = (json.loads(raw) or {}).get("data") or {}
+        ranges = data.get("amountRangeList") or []
+        records: list[DepositRateRecord] = []
+        for detail in data.get("rateDetails") or []:
+            term_days = detail.get("minMaturity") or 0
+            if term_days <= 0:
+                # "Birikimli Mevduat Hesabı", "Çeyiz Hesabı" gibi vadesi
+                # gün cinsinden verilmeyen ürünler. term_days modelde
+                # pozitif olmak zorunda; uydurmaktansa atla.
+                continue
+            cells = detail.get("amountRateList") or []
+            if len(cells) != len(ranges):
+                # Şema kaymış: oranı YANLIŞ kademeye yazmaktansa bu satırı at.
+                logger.warning(
+                    "deposit_rates/halkbank: kademe sayısı tutmuyor (%s != %s) — satır atlandı",
+                    len(cells), len(ranges),
+                )
+                continue
+            for label, cell in zip(ranges, cells):
+                try:
+                    amount_min, amount_max = self._bounds(label)
+                    # Kademe etiketi ile hücrenin kendi minAmount'ı aynı
+                    # olmalı; değilse eşleşme kaymıştır.
+                    if abs(_tr_number(str(cell.get("minAmount", "0"))) - amount_min) > 1:
+                        raise ValueError("kademe/minAmount uyuşmuyor")
+                    annual_rate = _rate_number(str(cell["rate"])) / 100
+                except (KeyError, ValueError) as exc:
+                    logger.warning("deposit_rates/halkbank: hücre atlandı (%s)", exc)
+                    continue
+                records.append(
+                    DepositRateRecord(
+                        institution=self.institution,
+                        currency="TRY",
+                        term_days=int(term_days),
+                        amount_min=amount_min,
+                        amount_max=amount_max,
+                        annual_rate=annual_rate,
+                        is_profit_share=False,
+                    )
+                )
+        return records
+
+
+class ZiraatDepositParser(BankDepositParser):
+    """Ziraat: "Fiyatlar ve Oranlar" sayfası, sunucu-render HTML. Doğrulandı 2026-09-04.
+
+    Aynı sayfa kredi için KAPALI (bkz. config/sources.yaml
+    loan_llm_endpoints/ziraat_fiyat_oranlar): sayfada kredi bölümü yok.
+    Ama mevduat, altın, döviz ve fon tabloları statik HTML olarak var —
+    bu parser yalnızca TL mevduat tablosunu alır.
+
+    SEÇİCİ NEDEN id ÜZERİNDEN: sayfada 25 tablo var ve TL mevduat için
+    İKİSİ birden bulunuyor — `rdBranchVadeliTL` (şube) ve
+    `rdIntBranchVadeliTL` (internet şubesi). Tablo sırasına göre saymak,
+    banka sayfaya bir tablo eklediği gün sessizce YANLIŞ tabloyu okurdu.
+    İnternet tablosu seçiliyor; gerekçe HalkbankDepositParser'daki ile
+    aynı (diğer bankaların hepsi online oran yayınlıyor) ve fark büyük:
+    şube tarafında 32-45 gün %5,00 iken internet tarafında %34,00.
+
+    SAYI BİÇİMİ TUZAĞI: aynı tabloda İKİ ayrı biçim var — tutar başlıkları
+    Türkçe ("1.000,00 - 4.999,99 TL", nokta binlik) ama oranlar İngilizce
+    ("%30.00", nokta ondalık). _tr_number ikisini de doğru çözer; tek
+    biçim varsayan bir dönüştürücü %30.00'ı 3000 yapardı.
+    """
+
+    institution = "ZIRAAT"
+    URL = "https://www.ziraatbank.com.tr/tr/fiyatlar-ve-oranlar"
+    SECTION_ID = "rdIntBranchVadeliTL"
+
+    # `data-id=` — `id=` DEĞİL. Sayfada aynı ad iki kez geçiyor: önce radio
+    # düğmesinin `id="rdIntBranchVadeliTL"`i, sonra tabloyu saran div'in
+    # `data-id="rdIntBranchVadeliTL"`i. `id=` ile eşleşen desen radio'yu
+    # bulup ondan SONRAKİ ilk tabloyu alıyordu — o da ŞUBE tablosu
+    # (2026-09-04'te canlıda yakalandı: 32 gün için %5,00 döndü, doğrusu
+    # %34,00). Şube tablosunun sarmalayıcısı `data-id="rdBranchVadeliTL"`
+    # olduğu için tam eşleşme şart.
+    _SECTION_RE = re.compile(
+        r'data-id="' + SECTION_ID + r'".*?<table[^>]*>(?P<table>.*?)</table>', re.DOTALL
+    )
+    _ROW_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
+    _CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.DOTALL | re.IGNORECASE)
+    # "1 - 7 gün", "30 - 31 gün". "Vadesiz" ve "1 Yıl Vadeli ... Faiz Ödemeli"
+    # satırları bilerek eşleşmez: gün cinsinden vade vermiyorlar.
+    _TERM_RE = re.compile(r"^(\d+)\s*-\s*(\d+)\s*g(?:ü|&#252;)n", re.IGNORECASE)
+    _AMOUNT_RE = re.compile(r"([\d.,]+)\s*(?:TL)?\s*(?:-\s*([\d.,]+))?")
+
+    def fetch(self) -> str:
+        resp = http.get(self.URL, headers=HEADERS, timeout=25, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.text
+
+    @staticmethod
+    def _text(cell_html: str) -> str:
+        return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", cell_html))).strip()
+
+    @classmethod
+    def _bounds(cls, label: str) -> tuple[float, float | None]:
+        """'1.000,00 - 4.999,99 TL' -> (1000.0, 4999.99); '500.000,00 TL ve üzeri' -> (500000.0, None)."""
+        m = cls._AMOUNT_RE.search(label)
+        if not m:
+            raise ValueError(f"kademe okunamadı: {label!r}")
+        low = _tr_number(m.group(1))
+        high = _tr_number(m.group(2)) if m.group(2) else None
+        return low, high
+
+    def parse(self, raw: str) -> list[DepositRateRecord]:
+        section = self._SECTION_RE.search(raw)
+        if section is None:
+            raise ValueError(
+                f"{self.SECTION_ID} bölümü bulunamadı — sayfa yapısı değişmiş olabilir"
+            )
+        rows = [
+            [self._text(c) for c in self._CELL_RE.findall(row)]
+            for row in self._ROW_RE.findall(section.group("table"))
+        ]
+        rows = [r for r in rows if any(r)]
+        if len(rows) < 2:
+            raise ValueError("TL mevduat tablosu boş")
+
+        headers = rows[0][1:]  # ilk sütun "Vade Grupları"
+        records: list[DepositRateRecord] = []
+        for row in rows[1:]:
+            term = self._TERM_RE.match(row[0])
+            if term is None:
+                continue  # Vadesiz / adlandırılmış ürünler
+            cells = row[1:]
+            if len(cells) != len(headers):
+                logger.warning(
+                    "deposit_rates/ziraat: sütun sayısı tutmuyor (%s != %s) — satır atlandı",
+                    len(cells), len(headers),
+                )
+                continue
+            for label, raw_rate in zip(headers, cells):
+                try:
+                    amount_min, amount_max = self._bounds(label)
+                    annual_rate = _rate_number(raw_rate) / 100
+                except ValueError:
+                    continue
+                records.append(
+                    DepositRateRecord(
+                        institution=self.institution,
+                        currency="TRY",
+                        term_days=int(term.group(1)),
+                        amount_min=amount_min,
+                        amount_max=amount_max,
+                        annual_rate=annual_rate,
+                        is_profit_share=False,
+                    )
+                )
+        return records
+
+
 PARSERS: dict[str, BankDepositParser] = {
     "vakifbank": VakifBankDepositParser(),
     "akbank": AkbankDepositParser(),
     "teb": CepteTebDepositParser(),
     "enpara": EnparaDepositParser(),
     "yapikredi": YapiKrediDepositParser(),
+    "halkbank": HalkbankDepositParser(),
+    "ziraat": ZiraatDepositParser(),
 }
 
 

@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from app.panels.common import age_hours, fetched_caption, format_local, institution_label
-from config.loader import source_summary
+from config.loader import source_caveat, source_summary
 from store import queries
 
 STALE_HOURS = 2
@@ -92,4 +92,9 @@ def render() -> None:
                 f"{ESTIMATED_MARK} Kaynak kendi kotasyon saatini yayınlamıyor; "
                 "kotasyonun gerçek yaşı bilinmiyor."
             )
+        # Ölçüm tabanı farklıysa kullanıcı bunu tablonun DİBİNDE değil,
+        # tablonun hemen altında görmeli (bkz. config/loader.source_caveat).
+        caveat = source_caveat("fx_endpoints", institution)
+        if caveat:
+            notes.append(f"⚠️ {caveat}")
         st.caption("  \n".join(notes))

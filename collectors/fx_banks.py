@@ -390,6 +390,82 @@ class ZiraatParser:
         return records
 
 
+class KuveytTurkParser:
+    """kuveytturk: Finans Portalı'nın kendi JSON ucu. Doğrulandı 2026-09-04.
+
+    Uç noktanın adresi sayfada YAZMIYOR; `magiclick.core.min.js` paketindeki
+    `ApiEndpoints` nesnesinde `exchangeRates: "ck0d84?<hash>"` olarak duruyor.
+    Aynı keşif deseni collectors/participation_rates.py'de kâr payı ucu için
+    zaten kullanılıyor ve orada 2026-08-25'ten beri çalışıyor.
+
+    NEDEN ÖNCE BİLİNEN ADRES DENENİYOR: paket 750 KB ve bu toplayıcı mesai
+    saatlerinde SAATTE BİR koşuyor. Her koşuda paketi indirmek günde ~7,5 MB
+    gereksiz trafik demekti (bkz. config/sources.yaml collection_etiquette).
+    Bu yüzden son bilinen adres doğrudan denenir; yalnızca o düşerse paket
+    indirilip adres yeniden keşfedilir. Hash döndüğünde kaynak kendi kendini
+    onarır, normal günde tek istek atar.
+
+    Kotasyon saati yayınlanmıyor -> quoted_at_is_estimated=True.
+    """
+
+    institution = "KUVEYTTURK"
+    currencies = ("USD", "EUR")
+    BASE = "https://www.kuveytturk.com.tr"
+    PAGE = f"{BASE}/finans-portali/"
+    # 2026-09-04'te keşfedilen adres. Kırıldığında _discover() devreye girer.
+    KNOWN_ENDPOINT = "/ck0d84?C24AD4C0FDA76C73081889B634A8C039"
+
+    _BUNDLE_RE = re.compile(r'src="(/magiclick\.core\.min\.js[^"]*)"')
+    _ENDPOINT_RE = re.compile(r'exchangeRates\s*:\s*"([^"]+)"')
+
+    def _discover(self) -> str:
+        page = http.get(self.PAGE, headers=HEADERS, timeout=25, follow_redirects=True)
+        page.raise_for_status()
+        bundle_match = self._BUNDLE_RE.search(page.text)
+        if not bundle_match:
+            raise ParseError("Kuveyt Türk sayfasında magiclick.core.min.js bulunamadı")
+        bundle = http.get(self.BASE + bundle_match.group(1), headers=HEADERS,
+                          timeout=40, follow_redirects=True)
+        bundle.raise_for_status()
+        endpoint_match = self._ENDPOINT_RE.search(bundle.text)
+        if not endpoint_match:
+            raise ParseError("JS paketinde ApiEndpoints.exchangeRates anahtarı yok")
+        return "/" + endpoint_match.group(1).lstrip("/")
+
+    def fetch(self) -> httpx.Response:
+        headers = {**HEADERS, "Referer": self.PAGE}
+        try:
+            resp = http.get(self.BASE + self.KNOWN_ENDPOINT, headers=headers,
+                            timeout=25, follow_redirects=True)
+            resp.raise_for_status()
+            return resp
+        except Exception as exc:  # noqa: BLE001 - adres dönmüş olabilir, keşfe düş
+            logger.info("fx_banks/kuveytturk: bilinen adres düştü (%s) — paketten aranıyor", exc)
+        resp = http.get(self.BASE + self._discover(), headers=headers,
+                        timeout=25, follow_redirects=True)
+        resp.raise_for_status()
+        return resp
+
+    def parse(self, raw: str) -> list[BankFxRecord]:
+        now = datetime.now(timezone.utc)
+        records = []
+        for row in json.loads(raw):
+            code = row.get("CurrencyCode")
+            if code not in self.currencies:
+                continue
+            buy, sell = row.get("BuyRate"), row.get("SellRate")
+            if not buy or not sell:
+                continue
+            records.append(
+                BankFxRecord(
+                    institution=self.institution, currency=code,
+                    buy=float(buy), sell=float(sell),
+                    quoted_at=now, quoted_at_is_estimated=True,
+                )
+            )
+        return records
+
+
 PARSERS = {
     "teb": CepteTebParser(),
     "vakifbank": VakifBankParser(),
@@ -398,6 +474,7 @@ PARSERS = {
     "yapikredi": YapiKrediParser(),
     "akbank": AkbankParser(),
     "ziraat": ZiraatParser(),
+    "kuveytturk": KuveytTurkParser(),
 }
 
 

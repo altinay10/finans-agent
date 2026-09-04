@@ -1,7 +1,7 @@
 # Finans Agent
 
-Yedi bankanın kurlarını (+ TCMB referansı), yedi kurumun mevduat/katılma
-hesabı oranlarını, beş kurumun kredi oranlarını, iki katılım bankasının kâr
+Sekiz bankanın kurlarını (+ TCMB referansı), dokuz kurumun mevduat/katılma
+hesabı oranlarını, on iki kurumun kredi oranlarını, iki katılım bankasının kâr
 paylaşım oranlarını ve iki portföy şirketinden fon fiyatlarını **canlı olarak
 toplayan** (hiçbiri koda gömülü sabit değil); kredi, mevduat ve fon getirisini
 deterministik hesaplayan; sonuçları tek bir Streamlit panelinde kurum kurum
@@ -109,8 +109,8 @@ Tek tek:
 
 ```bash
 ./venv/bin/python worker.py fx_tcmb    # TCMB resmi kur
-./venv/bin/python worker.py fx_banks         # TEB, VakıfBank, Enpara, Emlak Katılım, Yapı Kredi, Akbank, Ziraat
-./venv/bin/python worker.py deposits         # VakıfBank + TEB + Enpara + Yapı Kredi + Akbank matrisi
+./venv/bin/python worker.py fx_banks         # TEB, VakıfBank, Enpara, Emlak Katılım, Yapı Kredi, Akbank, Ziraat, Kuveyt Türk
+./venv/bin/python worker.py deposits         # VakıfBank + TEB + Enpara + Yapı Kredi + Akbank + Halkbank + Ziraat matrisi
 ./venv/bin/python worker.py loan_rates       # VakıfBank + Akbank + Yapı Kredi + Enpara + Emlak Katılım
 ./venv/bin/python worker.py profit_shares    # Emlak Katılım kâr paylaşım oranları
 ./venv/bin/python worker.py profit_shares_kt # Kuveyt Türk kâr paylaşım oranları
@@ -192,10 +192,11 @@ doğrulama yapıldı; sonuçlar `config/sources.yaml` içinde `status` /
 | CepteTEB | ✅ | ✅ | | | Mevduat: `VadeliHesapFaizOranList` tam matrisi |
 | Emlak Katılım | ✅ | | ✅ | ✅ | Katılım bankası — kredi "kâr oranı", mevduat yerine kâr paylaşım oranı |
 | Enpara (QNB) | ✅ | ✅ | ✅ | | Hepsi sunucu-render HTML'e gömülü |
-| Kuveyt Türk | | | | ✅ | Kâr paylaşım oranları ("87-13" biçimi) |
+| Halkbank | | ✅ | ✅ | | Mevduat: `depositinterestrates` (İNTERNET şube oranı; şube tablosu %5'te sabit). Kredi agent'tan |
+| Kuveyt Türk | ✅ | ✅ | | ✅ | Kur: JS paketinden keşfedilen `exchangeRates` ucu. Kâr paylaşım oranları ("87-13" biçimi) |
 | VakıfBank | ✅ | ✅ | ✅ | | Sitenin kendi herkese-açık (login'siz) token akışı |
 | Yapı Kredi | ✅ | ✅ | ✅ | | `_ajaxproxy` hesaplama araçları; kur gişe kurudur, makas geniş |
-| Ziraat | ✅ | | | | robots kısıtı kaldırıldı; mevduat/kredi uç noktası bulunamadı |
+| Ziraat | ✅ | ✅ | | | Kur: robots kısıtı kaldırıldı. Mevduat: "Fiyatlar ve Oranlar" sayfasındaki İNTERNET şube tablosu. Kredi oranı yayınlanmıyor |
 | Ak Portföy | | | | | **Fon fiyat serisi** — 4 fon × ~2.160 gün |
 
 **Kâr paylaşım oranı ≠ faiz.** Katılım bankalarının yayınladığı sayı yıllık
@@ -224,9 +225,9 @@ Ayrıntılı bulgular ve tamlık çetelesi: [ILERLEME.md](ILERLEME.md).
 - **Faz 0** — Hesaplama motoru + altın değer testleri: ✅
 - **Faz 1** — Şema + TCMB + fon fiyatları: ✅ (TEFAS emekliye ayrıldı, yerine Ak Portföy)
 - **Faz 2** — Streamlit v1: ✅ dört panel de gerçek veriyle, kurum kurum tablolar, tarayıcıda doğrulandı
-- **Faz 3** — Banka collector'ları: 🟢 10 kurum aktif (8 kur, 5 mevduat, 5 kredi, 2 kâr payı, 1 fon); kalanlar yukarıdaki tabloya göre kapalı
+- **Faz 3** — Banka collector'ları: ✅ envanterde **doğrulanmamış kaynak kalmadı** (39 aktif, 19 kapalı — hepsi gerekçeli). 9 kur, 9 mevduat, 12 kredi, 2 kâr payı, 2 fon sağlayıcısı
 - **Faz 4** — Zamanlama + gözlem: ✅ `worker.py`, `scrape_runs`, tazelik şeridi, cron
-- **Faz 5** — LLM fallback: 🟡 Gemini bağlı, token korumaları yerinde, **varsayılan kapalı**; `.env`'e anahtar girilip `LLM_FALLBACK_ENABLED=1` yapılınca açılır
+- **Faz 5** — LLM fallback: ✅ sağlayıcı `.env`'den takas edilebilir (kurulu: Qwen `qwen3-max`), token korumaları yerinde, **varsayılan kapalı**; `.env`'e anahtar girilip `LLM_FALLBACK_ENABLED=1` yapılınca açılır. Qwen'de `LLM_EXTRA_BODY={"enable_thinking": false}` ZORUNLU — bkz. `.env.example`
 
 ## Repo yapısı
 

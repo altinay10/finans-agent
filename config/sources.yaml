@@ -99,9 +99,24 @@ fx_endpoints:
     url: "https://webapi.halkbank.com.tr/api/MarketInformation/"
     type: json_get
     auth: none
-    status: unverified
-    last_verified: 2026-08-23
-    note: "TLS handshake tamamlanmadı (curl'den) — coğrafi/IP kısıtlaması olabilir, tekrar denenmeli"
+    status: blocked
+    last_verified: 2026-09-04
+    blocked_reason: >
+      Uç nokta ARTIK ÇALIŞIYOR (2026-08-23'teki TLS hatası geçiciymiş; 200
+      dönüyor, dakikalık güncelleniyor, lastModifiedDate ile gerçek kotasyon
+      saati de veriyor). Buna rağmen KAPALI, üç sebeple:
+      (1) Bankanın KENDİ yanıtı `shouldShow: false` diyor — yani servis,
+          kendi ön yüzüne "bu kurları gösterme" talimatı veriyor.
+      (2) Halkbank'ın sitesinde herkese açık bir kur sayfası YOK; denenen
+          /doviz-kurlari yolları 404 ve ana sayfada kur widget'ı render
+          edilmiyor. Yani gösterdiğimiz sayıyı kullanıcı bankanın kendi
+          sitesinden DOĞRULAYAMAZ.
+      (3) Makas %5,7 (47,16/49,86) — panelde kıyaslanan döviz HESABI
+          kurlarının bandı %1,8-4,1. Nakit/efektif tarafında olma ihtimali
+          yüksek; aynı sütuna yazmak yanıltıcı olurdu.
+      Banka bu kurları herkese açık bir sayfada yayınlarsa tek satırlık
+      status değişikliğiyle açılır. Halkbank MEVDUAT oranları AYRI bir uç
+      noktadan geliyor ve açık — bkz. deposit_endpoints.halkbank.
 
   teb:
     url: "https://www.cepteteb.com.tr/services/GetGunlukDovizKur"
@@ -109,16 +124,33 @@ fx_endpoints:
     auth: none
     headers: {Referer: "https://www.cepteteb.com.tr/"}
     status: active
-    last_verified: 2026-08-23
-    note: "collectors/fx_banks.py CepteTebParser — canlı test edildi, çalışıyor"
+    last_verified: 2026-09-04
+    note: >
+      collectors/fx_banks.py CepteTebParser — canlı test edildi, çalışıyor.
+      Yanıttaki `dovizAlis`/`dovizSatis` (döviz hesabı kuru) SIFIR geliyor,
+      yani banka o kuru bu uçtan yayınlamıyor; kullanılabilir tek alan
+      `tebAlis`/`tebSatis`. `merkezAlis`/`merkezSatis` TCMB kurudur, TEB'in
+      değil — onu TEB satırı diye yazmak yanlış olurdu.
+    caveat: >
+      Bu satır TEB'in NAKİT/EFEKTİF kurudur, döviz hesabı kuru değil: makas
+      %9 iken paneldeki diğer bankalarda %2 dolayında. Banka döviz hesabı
+      kurunu herkese açık yayınlamıyor (uçtaki dovizAlis/dovizSatis alanları
+      0). Alış-satış farkını diğer kurumlarla doğrudan kıyaslama.
 
   kuveytturk:
     url: "https://www.kuveytturk.com.tr/finans-portali/"
-    type: two_step_token
+    type: js_discovered_json
     auth: none
-    status: unverified
-    last_verified: null
-    note: "Önce sayfadan token çek, sonra JSON iste — henüz canlı test edilmedi"
+    status: active
+    last_verified: 2026-09-04
+    note: >
+      collectors/fx_banks.py KuveytTurkParser — canlı test edildi.
+      Uç noktanın adresi sayfada yazmıyor; magiclick.core.min.js paketindeki
+      ApiEndpoints.exchangeRates anahtarında `ck0d84?<HASH>` olarak duruyor —
+      kâr payı ucuyla aynı desen (bkz. profit_share_endpoints.kuveytturk).
+      FARK: bu toplayıcı saatte bir koştuğu için 750 KB'lık paketi her seferinde
+      indirmiyor; son bilinen adresi doğrudan deniyor, yalnızca o düşerse
+      keşfe iniyor. Kotasyon saati yayınlanmıyor -> quoted_at tahmini.
 
   ziraat:
     url: "https://www.ziraatbank.com.tr/tr/_layouts/15/Ziraat/HomePage/Ajax.aspx/GetZiraatVerileri"
@@ -310,10 +342,39 @@ deposit_endpoints:
     status: blocked
     blocked_reason: "WAF — bkz. fx_endpoints.isbank"
   ziraat:
-    status: unverified
+    url: "https://www.ziraatbank.com.tr/tr/fiyatlar-ve-oranlar"
+    type: html
+    auth: none
+    status: active
+    institution: ZIRAAT
+    last_verified: 2026-09-04
     note: >
-      Kur uç noktası açıldı ama mevduat/kredi oranı için ayrı bir uç nokta
-      henüz bulunamadı; hesaplama araçları sayfaları 404 veriyor.
+      collectors/deposit_rates.py ZiraatDepositParser — canlı test edildi.
+      2026-08-25'te "hesaplama araçları 404" diye kapalı bırakılmıştı; aranan
+      yer yanlışmış. Oranlar ürün sayfalarında değil, TEK bir "Fiyatlar ve
+      Oranlar" sayfasında sunucu-render tablo olarak yayınlanıyor.
+      İNTERNET ŞUBESİ tablosu alınır (data-id="rdIntBranchVadeliTL"); aynı
+      sayfada ŞUBE tablosu da var ve orada tüm vadeler %5,00'de sabit.
+      Not: aynı sayfa KREDİ için kapalı — kredi bölümü yok
+      (bkz. loan_llm_endpoints.ziraat_fiyat_oranlar).
+
+  halkbank:
+    url: "https://webapi.halkbank.com.tr/api/deposit/depositinterestrates/"
+    type: json_post
+    auth: none
+    status: active
+    institution: HALKBANK
+    last_verified: 2026-09-04
+    note: >
+      collectors/deposit_rates.py HalkbankDepositParser — canlı test edildi.
+      Parametreler: interestType=2 (İnternet/Mobil Şube; 1 = şube ve orada
+      tüm vadeler %5-6'da sabit), currCode=9000 (TRY).
+      BANKANIN SAYFASINDA HATA VAR: /vadeli-tl-mevduat-faiz-oranlari sayfası
+      bileşeni `data-currcodelist="9190"` ile besliyor ama 9190 TL değil
+      (o kodla tüm tablo %0,01-%0,10 geliyor), bu yüzden sayfa TARAYICIDA
+      BOŞ RENDER EDİYOR. TL tablosunu yalnızca 9000 döndürüyor; kodlar tek
+      tek denenerek bulundu. Yani veriyi bankanın servisinden alıyoruz,
+      bozuk sayfasından değil.
   garantibbva:
     status: blocked
     blocked_reason: "HTTP 500 (oturum çerezi gerekiyor) — bkz. fx_endpoints.garantibbva"
@@ -439,25 +500,45 @@ loan_endpoints:
     covers: []
     blocked_reason: "WAF — bkz. fx_endpoints.isbank. Kredi uç noktası da aynı blok sayfasını döndürüyor."
   ziraat:
-    status: unverified
+    status: blocked
     institution: ZIRAAT
     covers: []
-    blocked_reason: "Kur uç noktası açık ama kredi/hesaplama sayfaları 404; oran uç noktası bulunamadı."
+    last_verified: 2026-09-04
+    blocked_reason: >
+      Araştırma tamamlandı: Ziraat kredi oranını hiçbir yerde herkese açık
+      yayınlamıyor. "Fiyatlar ve Oranlar" sayfasında mevduat/altın/döviz/fon
+      tabloları var ama kredi bölümü YOK (bkz. loan_llm_endpoints.
+      ziraat_fiyat_oranlar); ürün sayfaları da yalnızca başvuru formuna
+      yönlendiriyor. Aynı sayfa MEVDUAT için açıldı
+      (bkz. deposit_endpoints.ziraat).
   garantibbva:
     status: blocked
     institution: GARANTIBBVA
     covers: []
     blocked_reason: "HTTP 500 (oturum çerezi gerekiyor) — bkz. fx_endpoints.garantibbva."
   kuveytturk:
-    status: unverified
+    status: blocked
     institution: KUVEYTTURK
     covers: []
-    blocked_reason: "Finansman kâr oranı uç noktası henüz araştırılmadı."
+    last_verified: 2026-09-04
+    blocked_reason: >
+      Araştırma tamamlandı: sitedeki JS paketi (magiclick.core.min.js)
+      ApiEndpoints nesnesinde yalnızca üç oran ucu tanımlıyor —
+      exchangeRates, lastProfitShareRates, lastProfitShareRatesByMaturityTerm.
+      FİNANSMAN (kredi) kâr oranı için uç nokta yok; /kendim-icin/finansman
+      404. Kuveyt Türk'ün kur ve kâr payı tarafı AÇIK
+      (bkz. fx_endpoints.kuveytturk, profit_share_endpoints.kuveytturk).
   halkbank:
-    status: unverified
+    status: blocked
     institution: HALKBANK
     covers: []
-    blocked_reason: "Kur uç noktasında TLS el sıkışması tamamlanmıyor; kredi tarafı hiç denenmedi."
+    last_verified: 2026-09-04
+    blocked_reason: >
+      Elle ayrıştırılacak bir kredi ucu yok, ama KAPSAM AÇIĞI DEĞİL:
+      Halkbank kredi oranı agent toplayıcısından geliyor ve çalışıyor
+      (bkz. loan_llm_endpoints.halkbank — 2026-09-04 koşusunda 1 satır).
+      Eski gerekçedeki TLS hatası da geçmiş; o ayrı uç nokta artık açık ama
+      başka sebeple kapalı (bkz. fx_endpoints.halkbank).
 
 # ---------------------------------------------------------------------------
 # AGENT ile kredi oranı — collectors/loan_rates_llm.py
@@ -531,22 +612,29 @@ loan_llm_endpoints:
     url: "https://www.teb.com.tr/ihtiyac-kredileri/"
     type: llm_html
     auth: none
-    status: unverified
+    status: blocked
     institution: TEB
-    last_verified: 2026-08-26
+    last_verified: 2026-09-04
     blocked_reason: >
-      Sayfa 200 ve erişilebilir ama düz metinde oran GÖRÜNMÜYOR (JS ile
-      geliyor olabilir). Modele oransız bir sayfa göndermek token yakmaktır;
-      oranın nerede yayınlandığı bulunana kadar kapalı.
+      Araştırma tamamlandı. 2026-09-04'te sayfa GERÇEK TARAYICIDA açıldı
+      (JS tamamen çalıştıktan sonra): görünür metinde tek bir yüzde değeri
+      bile yok. Yani oran "JS ile geliyor" değil, hiç yayınlanmıyor.
+      TEB'in diğer sayfası da aynı sonucu verdi
+      (bkz. cepteteb_ihtiyac — orada tek oran kredi TAHSİS ÜCRETİ).
 
   garantibbva:
     url: "https://www.garantibbva.com.tr/krediler/bireysel-ihtiyac-kredisi"
     type: llm_html
     auth: none
-    status: unverified
+    status: blocked
     institution: GARANTIBBVA
-    last_verified: 2026-08-26
-    blocked_reason: "Sayfa 200 ama düz metinde oran yok — TEB ile aynı durum."
+    last_verified: 2026-09-04
+    blocked_reason: >
+      ARTIK GEÇERSİZ KAYIT — aynı URL garantibbva_ihtiyac altında ACTIVE ve
+      veri üretiyor (2026-09-04 koşusunda 1 satır). Bu satır, odak metni
+      çıkarımı düzelmeden önceki başarısız denemeden kalmış. Kapsam açığı
+      değil; yalnızca envanterde ikinci kayıt olduğu için "doğrulanmadı"
+      sayısını şişiriyordu.
 
   isbank:
     url: "https://www.isbank.com.tr/ihtiyac-kredisi"
@@ -563,13 +651,14 @@ loan_llm_endpoints:
       GÖNDERMEZ — engel sayfası tespit edilip istek düşürülür.
 
   ziraat:
-    status: unverified
+    status: blocked
     institution: ZIRAAT
-    last_verified: 2026-08-26
+    last_verified: 2026-09-04
     blocked_reason: >
-      Kredi ürün sayfalarının doğru adresi bulunamadı (denenen yollar 404).
-      Ana sayfada yalnızca başvuru formu bağlantıları var. Engel yok,
-      araştırma yarım.
+      Araştırma tamamlandı ve ziraat_fiyat_oranlar kaydıyla birleşti: doğru
+      sayfa bulundu (/tr/fiyatlar-ve-oranlar) ama orada kredi bölümü yok.
+      Ziraat kredi oranını herkese açık yayınlamıyor.
+      Bkz. ziraat_fiyat_oranlar ve loan_endpoints.ziraat.
 
 # ---------------------------------------------------------------------------
 # Katılım bankası KÂR PAYLAŞIM oranları — collectors/profit_shares.py
@@ -766,14 +855,18 @@ fund_endpoints:
     url: "https://www.isportfoy.com.tr/tr/yatirim-fonlari"
     type: html
     auth: none
-    status: unverified
-    last_verified: 2026-08-25
+    status: blocked
+    last_verified: 2026-09-04
     blocked_reason: >
-      Fon LİSTESİ okunabiliyor (kod + ad + sayfa adresi gömülü JSON olarak
-      geliyor; TI2 = İş Portföy Hisse Senedi TL Fonu gibi). Ama GEÇMİŞ FİYAT
-      SERİSİ uç noktası bulunamadı: fon detay sayfasında data-service-url ya
-      da gömülü seri yok, ayrı bir "/getiri-ve-fiyatlar" sayfası var ve
-      henüz incelenmedi. Engel yok, araştırma yarım — bir sonraki adım orası.
+      Araştırma tamamlandı — "bir sonraki adım" olarak işaretlenen
+      /getiri-ve-fiyatlar sayfası 2026-09-04'te incelendi. Sayfa GÜNÜN
+      fiyatını sunucu-render tablo olarak veriyor (fon kodu + tarih + birim
+      pay fiyatı, ~100 fon) ama GEÇMİŞ SERİ YOK: fon detay sayfalarında da
+      data-service-url, grafik ucu veya gömülü seri bulunmuyor.
+      Panelin fon simülasyonu geçmiş seriyle çalışıyor (bkz.
+      collectors/fund_providers.py); tek bir günlük fiyat, sıfır geçmişle
+      başlayan ve aylarca kullanılamayacak bir fon kaydı üretirdi. Engel
+      YOK — sağlayıcı geçmiş seri yayınlarsa açılabilir.
 
   tefas:
     url: "https://www.tefas.gov.tr/api/DB/BindHistoryInfo"
@@ -808,6 +901,11 @@ funds:
 collection_etiquette:
   min_delay_seconds: 2
   max_delay_seconds: 5
-  user_agent: "finans-agent/0.1 (kişisel kullanım; iletişim: efebarisaltinay@gmail.com)"
+  # SADECE ASCII: HTTP başlıkları latin-1 ile kodlanır ve Türkçe harf içeren
+  # bir User-Agent, istek ağa çıkmadan UnicodeEncodeError ile patlar
+  # (2026-08-25'te yakalandı, bkz. collectors/participation_rates.py).
+  # Toplayıcılar bu değeri okumuyor, kendi ASCII sabitlerini kullanıyor;
+  # yine de burada bozuk bir değer bırakmak sonraki geliştirici için tuzak.
+  user_agent: "finans-agent/0.1 (kisisel kullanim; iletisim: efebarisaltinay@gmail.com)"
   respect_robots_txt: true
   use_if_modified_since: true

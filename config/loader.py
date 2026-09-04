@@ -145,6 +145,7 @@ def source_inventory() -> list[dict]:
                     "last_verified": entry.get("last_verified"),
                     "blocked_reason": _clean(entry.get("blocked_reason")),
                     "note": _clean(entry.get("note")),
+                    "caveat": _clean(entry.get("caveat")),
                 }
             )
     return rows
@@ -204,3 +205,20 @@ def source_summary(dataset: str, institution: str) -> str | None:
     if row.get("robots_override"):
         parts.append("robots.txt kısıtı kullanıcı kararıyla uygulanmıyor")
     return " · ".join(parts)
+
+
+def source_caveat(dataset: str, institution: str) -> str | None:
+    """Kaynağa özgü "bu sayı neyi ölçüyor" uyarısı — varsa tablonun altına.
+
+    NEDEN AYRI ALAN: `note` geliştiriciye yazılmış bir envanter notudur ve
+    panelde gösterilmez. `caveat` ise KULLANICIYA gösterilir ve yalnızca tek
+    bir iş için vardır: aynı tabloda kıyaslanan sayılardan birinin ÖLÇÜM
+    TABANI farklıysa bunu söylemek.
+
+    İlk kullanımı CepteTEB kuru: paneldeki bütün bankalar döviz HESABI kuru
+    yayınlarken TEB'in herkese açık ucu nakit/efektif kuru veriyor (makas %9
+    vs %2). Sayı yanlış değil ama etiketsiz bırakılırsa "TEB en kötü kuru
+    veriyor" diye okunur ki bu yanlış bir kıyas.
+    """
+    row = endpoint_for(dataset, institution)
+    return row.get("caveat") if row else None
