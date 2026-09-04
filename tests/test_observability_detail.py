@@ -768,3 +768,116 @@ def test_heartbeat_thread_beats_independently_of_the_collection_loop(db):
     state = heartbeat.read()
     assert state is not None
     assert state["age_seconds"] < 0.2     # ana döngü bloklu olsa da taze
+
+
+# ------------------------------------------- kurtarma tablosu (Arrow) ----
+
+
+def _recovery_row(**over):
+    satir = {
+        "state": "hâlâ bozuk",
+        "collector": "fx_banks",
+        "source": "akbank",
+        "attempts": 3,
+        "failures": 3,
+        "last_failure": None,
+        "last_success": None,
+        "outage_minutes": 42,
+    }
+    satir.update(over)
+    return satir
+
+
+def test_recovery_frame_is_arrow_serializable_with_missing_outages():
+    """Konteyner log'unda yakalanan hatanın regresyon testi (2026-09-04).
+
+    `outage_minutes or "—"` sayısal sütuna metin karıştırıyordu; bazı satır
+    int bazısı str olunca sütun `object` oluyor ve Streamlit'in Arrow
+    dönüşümü `ArrowInvalid: Could not convert '—' with type str` ile
+    düşüyordu. Tablo Streamlit'in yedeğiyle yine çiziliyordu ama her
+    render'da log'a traceback basılıyordu.
+    """
+    import pyarrow as pa
+
+    from app.panels.logs import _recovery_frame
+
+    frame = _recovery_frame([
+        _recovery_row(outage_minutes=42),
+        _recovery_row(state="düzeldi", outage_minutes=None),
+        _recovery_row(state="hiç başarılı olmadı", outage_minutes=None),
+    ])
+    # Asıl sınav bu: Streamlit tabloyu tam olarak böyle serileştiriyor.
+    pa.Table.from_pandas(frame, preserve_index=False)
+    assert str(frame["Kesinti (dk)"].dtype) == "Int64"
+
+
+def test_recovery_frame_keeps_zero_minute_outage_as_zero():
+    """`or` sıfırı yutuyordu: yeni başlamış (<1 dk) kesinti 0 üretir ve
+    "—" (bilinmiyor) gibi görünürdü. Oysa "hâlâ bozuk" satırında 0 gerçek
+    ve bilinen bir değerdir."""
+    from app.panels.logs import _recovery_frame
+
+    frame = _recovery_frame([_recovery_row(outage_minutes=0)])
+    assert frame["Kesinti (dk)"].iloc[0] == 0
+
+
+def test_recovery_frame_handles_empty_input():
+    from app.panels.logs import _recovery_frame
+
+    assert _recovery_frame([]).empty
+
+
+def test_recovery_marks_a_retired_source_instead_of_calling_it_broken(db):
+    """Envanterden çıkarılan kaynak SONSUZA DEK "bozuk" görünmemeli.
+
+    2026-09-04'te canlıda görüldü: cepteteb_ihtiyac ve ziraat_fiyat_oranlar
+    bilinçli olarak kapatılmıştı ama panel onları 34 saattir "şu an bozuk"
+    diye alarm veriyordu. Hiç düzelmeyecek bir alarm, insanı listenin
+    tamamını görmezden gelmeye alıştırır.
+
+    Ayrım: kaynak toplayıcının EN SON koşusunda (run_id) yer alıyor mu?
+    """
+    from store.queries import source_recovery
+
+    with SessionLocal() as s:
+        # 1. koşu: iki kaynak da denendi, biri düştü
+        emekli = _source_run("loan_rates_llm", "kapatilan", "failed", 300)
+        emekli.run_id = 1
+        # "duran" bir kez başarılı olmuş olmalı, yoksa durumu "hiç başarılı
+        # olmadı" olur ve panel zaten alarm vermez — testin ölçmek istediği
+        # şey sürmekte olan GERÇEK bir kesintinin susturulmadığı.
+        onceki = _source_run("loan_rates_llm", "duran", "ok", 400)
+        onceki.run_id = 0
+        calisan = _source_run("loan_rates_llm", "duran", "failed", 300)
+        calisan.run_id = 1
+        # 2. koşu: yalnızca "duran" denendi — "kapatilan" envanterden çıktı
+        hala = _source_run("loan_rates_llm", "duran", "failed", 20)
+        hala.run_id = 2
+        s.add_all([emekli, onceki, calisan, hala])
+        s.commit()
+
+    durum = {r["source"]: r for r in source_recovery()}
+    assert durum["kapatilan"]["state"] == "artık denenmiyor"
+    assert durum["kapatilan"]["outage_minutes"] is None
+    # Hâlâ denenen ve hâlâ düşen kaynak GERÇEK alarmdır, susturulmamalı.
+    assert durum["duran"]["state"] == "hâlâ bozuk"
+    assert durum["duran"]["outage_minutes"] is not None
+
+
+def test_recovery_does_not_retire_sources_when_run_id_is_missing(db):
+    """run_id'si olmayan satırlarda (eski kayıtlar) kaynak GİZLENMEMELİ.
+
+    SQL'de `=` ile karşılaştırmak NULL = NULL -> NULL üretir ve her kaynağı
+    "artık denenmiyor" sayardı; yani tüm gerçek alarmlar sessizce kaybolurdu.
+    """
+    from store.queries import source_recovery
+
+    with SessionLocal() as s:
+        s.add_all([
+            _source_run("fx_banks", "akbank", "ok", 400),
+            _source_run("fx_banks", "akbank", "failed", 60),
+        ])
+        s.commit()
+
+    row = source_recovery()[0]
+    assert row["state"] == "hâlâ bozuk"

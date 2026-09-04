@@ -115,11 +115,22 @@ def claim() -> bool:
     anında devralınır.
 
     Farklı bir host'tan (ör. ayrı konteyner) gelen nabızda pid kontrolü
-    anlamsızdır; orada zaman aşımı tek ölçüttür.
+    anlamsızdır; orada zaman aşımı tek ölçüttür. Düzgün kapanan zamanlayıcı
+    kilidi zaten bırakır, o yüzden bu bekleme normalde yaşanmaz (bkz.
+    release()).
+
+    KİMLİK (host, pid) ÇİFTİDİR — yalnızca pid DEĞİL. Konteynerde
+    zamanlayıcı HER ZAMAN pid 1'dir; tek başına pid'e bakan bir kontrol,
+    başka bir konteynerdeki zamanlayıcının nabzını "benim nabzım" sanıp
+    kilidi doğrudan alıyordu. İki konteyner birden koşarsa bankalar iki kat
+    istek alır — bu kilidin var olma sebebi tam olarak buydu. Aynı kusur
+    sahiplenmenin doğrulama adımında da vardı: iki pid-1 süreci de "kazandım"
+    diye okuyordu (2026-09-04'te fark edildi).
     """
+    ben = (socket.gethostname(), os.getpid())
     state = read()
-    if state and state["alive"] and state["pid"] != os.getpid():
-        ayni_makine = state["host"] == socket.gethostname()
+    if state and state["alive"] and (state["host"], state["pid"]) != ben:
+        ayni_makine = state["host"] == ben[0]
         if not ayni_makine or _pid_running(state["pid"]):
             return False
         logger.warning(
@@ -127,7 +138,46 @@ def claim() -> bool:
         )
     beat()
     after = read()
-    return bool(after and after["pid"] == os.getpid())
+    return bool(after and (after["host"], after["pid"]) == ben)
+
+
+def release() -> None:
+    """Kilidi BIRAK — yalnızca düzgün kapanışta çağrılır.
+
+    NEDEN GEREKLİ (2026-09-04, canlıda ölçüldü): nabız satırı süreç
+    öldükten sonra da 180 saniye "canlı" görünüyor. Aynı makinede bu
+    zararsız — claim() pid'in gerçekten yaşadığını sınayıp kilidi
+    devralıyor. Ama FARKLI BİR HOST'tan bakan bir zamanlayıcı için pid
+    kontrolü anlamsız, tek ölçüt zaman aşımı.
+
+    Konteynerde her `docker compose up -d` yeni bir hostname üretiyor.
+    Yani her yeniden dağıtımda yeni zamanlayıcı, üç dakika boyunca eski
+    konteynerin nabzını canlı sanıp "başkası çalışıyor" deyip çıkıyor,
+    restart politikası onu tekrar başlatıyor — üç dakikalık crash loop ve
+    Docker Desktop'ta "Restarting". Host'tan konteynere veritabanı
+    taşırken de aynısı oluyordu.
+
+    Kilidi düzgün kapanışta bırakmak bunu tamamen bitirir. ÇÖKME durumu
+    korumasız kalmaz: satır orada durur ve zaman aşımı yine devreye girer.
+
+    SAHİPLİK KONTROLÜ şart: bu süreç kilidi zaten kaybetmişse (başkası
+    devralmışsa) satırı silmek, ÇALIŞAN bir zamanlayıcının kilidini
+    çalmak olurdu.
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.get(SchedulerHeartbeat, ROW_ID)
+            if row is None:
+                return
+            if row.pid != os.getpid() or row.host != socket.gethostname():
+                logger.info("nabız bize ait değil (host=%s pid=%s) — bırakılmıyor",
+                            row.host, row.pid)
+                return
+            session.delete(row)
+            session.commit()
+            logger.info("zamanlayıcı kilidi bırakıldı")
+    except Exception as exc:  # noqa: BLE001 - kapanışı hiçbir şey engellememeli
+        logger.error("nabız bırakılamadı: %s", exc)
 
 
 BEAT_INTERVAL_SECONDS = 30

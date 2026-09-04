@@ -529,24 +529,47 @@ def source_recovery(days: int = 30) -> list[dict]:
     Bu sorgu olmadan "dün üç koşu düştü, bugün düzeldi" cümlesi
     kurulamıyordu: source_runs ham olayları tutar, ama olayları KESİNTİYE
     dönüştüren mantık burada.
+
+    EMEKLİYE AYRILMIŞ KAYNAK AYRIMI (2026-09-04): envanterden çıkarılan bir
+    kaynağın son denemesi sonsuza dek "başarısız" kalıyor ve panel onu
+    KALICI OLARAK "şu an bozuk" diye gösteriyordu — cepteteb_ihtiyac ve
+    ziraat_fiyat_oranlar 34 saattir öyle duruyordu, oysa ikisi de bilinçli
+    olarak kapatılmıştı. Hiç düzelmeyecek bir alarm, insanı listenin
+    tamamını görmezden gelmeye alıştırır.
+
+    Ayrım VERİDEN çıkarılıyor, config'den değil: kaynak, toplayıcının EN SON
+    koşusunda (`run_id`) yer alıyor mu? Almıyorsa artık denenmiyordur.
+    run_id kullanmak zaman eşiğinden daha kesin — bir koşu dakikalarca
+    sürebiliyor, "şu kadar dakika eskiyse" gibi bir kural yanlış tarafa
+    düşerdi.
     """
     with SessionLocal() as session:
         rows = session.execute(
             text(
                 """
                 WITH recent AS (
-                    SELECT collector, source, status, started_at
+                    SELECT collector, source, status, started_at, run_id
                     FROM source_runs
                     WHERE started_at > datetime('now', :window)
                       AND phase IN ('fetch', 'parse')
+                ),
+                last_run AS (
+                    SELECT collector, MAX(run_id) AS run_id FROM recent GROUP BY collector
                 )
-                SELECT collector, source,
-                       SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END)  AS failures,
-                       COUNT(*)                                          AS attempts,
-                       MAX(CASE WHEN status != 'ok' THEN started_at END) AS last_failure,
-                       MAX(CASE WHEN status  = 'ok' THEN started_at END) AS last_success
-                FROM recent
-                GROUP BY collector, source
+                SELECT r.collector, r.source,
+                       SUM(CASE WHEN r.status != 'ok' THEN 1 ELSE 0 END)  AS failures,
+                       COUNT(*)                                            AS attempts,
+                       MAX(CASE WHEN r.status != 'ok' THEN r.started_at END) AS last_failure,
+                       MAX(CASE WHEN r.status  = 'ok' THEN r.started_at END) AS last_success,
+                       -- `IS`, SQLite'ta NULL-güvenli eşitliktir. `=` kullanmak,
+                       -- run_id'si olmayan (eski ya da elle yazılmış) satırlarda
+                       -- NULL = NULL -> NULL üretir ve kaynağı yanlışlıkla
+                       -- "artık denenmiyor" sayardı. Belirleyemiyorsak kaynağı
+                       -- GİZLEMEK yerine göstermek doğrusu.
+                       MAX(CASE WHEN r.run_id IS lr.run_id THEN 1 ELSE 0 END) AS in_last_run
+                FROM recent r
+                JOIN last_run lr ON lr.collector = r.collector
+                GROUP BY r.collector, r.source
                 HAVING failures > 0
                 ORDER BY failures DESC
                 """
@@ -559,7 +582,13 @@ def source_recovery(days: int = 30) -> list[dict]:
             item = dict(row)
             last_failure = _as_dt(item["last_failure"])
             last_success = _as_dt(item["last_success"])
-            if last_success and last_failure and last_success > last_failure:
+            if not item.get("in_last_run"):
+                # Toplayıcı o kaynağı artık denemiyor (envanterden çıkarıldı).
+                # Son denemesi başarısızdı ve öyle kalacak; "bozuk" demek
+                # asla düzelmeyecek bir alarm üretir.
+                item["state"] = "artık denenmiyor"
+                item["outage_minutes"] = None
+            elif last_success and last_failure and last_success > last_failure:
                 item["state"] = "düzeldi"
                 item["outage_minutes"] = None
             elif last_failure and not last_success:

@@ -297,6 +297,49 @@ def _render_http(days: int) -> None:
 # ------------------------------------------------------------- kurtarma ----
 
 
+def _recovery_frame(rows: list[dict]) -> pd.DataFrame:
+    """Kurtarma tablosunu çizilebilir bir DataFrame'e çevirir.
+
+    İKİ HATA BURADA DÜZELDİ (2026-09-04, konteyner log'unda yakalandı):
+
+    1. `outage_minutes or "—"` sayısal sütuna metin karıştırıyordu. Bazı
+       satırlar int, bazıları str olunca pandas sütunu `object` yapıyor ve
+       Streamlit'in Arrow serileştirmesi
+       `ArrowInvalid: Could not convert '—' with type str` ile düşüyordu.
+       Streamlit kendi yedeğine geçtiği için tablo yine çiziliyordu, ama her
+       render'da log'a traceback basılıyordu.
+    2. `or` sıfırı da yutuyordu: yeni başlamış (<1 dk) bir kesinti
+       `outage_minutes=0` üretiyor ve "—" yani BİLİNMİYOR gibi görünüyordu.
+       Oysa "hâlâ bozuk" satırında 0, gerçek ve bilinen bir değer.
+
+    Çözüm sütunu SAYISAL tutmak (pandas'ın nullable Int64'ü): boş hücre
+    "veri yok" demek, sıralama da bozulmuyor.
+    """
+    frame = pd.DataFrame(
+        [
+            {
+                "Durum": {"düzeldi": "🟢 düzeldi",
+                          "hâlâ bozuk": "🔴 hâlâ bozuk",
+                          "hiç başarılı olmadı": "⚫ hiç başarılı olmadı",
+                          "artık denenmiyor": "⚪ artık denenmiyor"}.get(
+                    r["state"], r["state"]
+                ),
+                "Toplayıcı": r["collector"],
+                "Kaynak": r["source"],
+                "Deneme": r["attempts"],
+                "Hata": r["failures"],
+                "Son hata": _stamp(r["last_failure"]),
+                "Son başarı": _stamp(r["last_success"]),
+                "Kesinti (dk)": r["outage_minutes"],
+            }
+            for r in rows
+        ]
+    )
+    if not frame.empty:
+        frame["Kesinti (dk)"] = pd.array(frame["Kesinti (dk)"], dtype="Int64")
+    return frame
+
+
 def _render_recovery(days: int) -> None:
     st.markdown(
         "**\"Dönmeyen istekler daha sonra döndü mü?\"** Bir kaynak bozulup "
@@ -306,32 +349,13 @@ def _render_recovery(days: int) -> None:
     if not rows:
         st.success("Bu aralıkta hiçbir kaynak hata almamış.")
         return
-    st.dataframe(
-        pd.DataFrame(
-            [
-                {
-                    "Durum": {"düzeldi": "🟢 düzeldi",
-                              "hâlâ bozuk": "🔴 hâlâ bozuk",
-                              "hiç başarılı olmadı": "⚫ hiç başarılı olmadı"}.get(
-                        r["state"], r["state"]
-                    ),
-                    "Toplayıcı": r["collector"],
-                    "Kaynak": r["source"],
-                    "Deneme": r["attempts"],
-                    "Hata": r["failures"],
-                    "Son hata": _stamp(r["last_failure"]),
-                    "Son başarı": _stamp(r["last_success"]),
-                    "Kesinti (dk)": r["outage_minutes"] or "—",
-                }
-                for r in rows
-            ]
-        ),
-        use_container_width=True, hide_index=True,
-    )
+    st.dataframe(_recovery_frame(rows), use_container_width=True, hide_index=True)
     st.caption(
         "🟢 **düzeldi**: son hatadan SONRA başarılı bir koşu var — geçici bir "
         "arızaydı. 🔴 **hâlâ bozuk**: son hatadan sonra hiç başarı gelmedi, "
-        "kesinti sürüyor."
+        "kesinti sürüyor. ⚪ **artık denenmiyor**: kaynak toplayıcının son "
+        "koşusunda hiç yer almadı — envanterden çıkarılmış demektir, bozuk "
+        "değil (gerekçesi **Kaynaklar** sekmesinde)."
     )
 
 

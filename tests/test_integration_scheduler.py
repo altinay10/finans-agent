@@ -190,3 +190,91 @@ def test_startup_only_collects_what_is_actually_stale(db):
     assert "loan_rates_llm" not in scheduler.due_by_staleness(), (
         "1 saat önce başarıyla koşmuş agent yeniden çağrılmamalı"
     )
+
+
+# ----------------------------------------------- kilidin bırakılması ----
+
+
+def test_release_clears_lock_so_next_scheduler_starts_immediately(seeded_db):
+    """Düzgün kapanan zamanlayıcı kilidi bırakmalı.
+
+    Bırakmazsa nabız 180 sn daha "canlı" görünür. Aynı makinede claim()
+    pid kontrolüyle devralıyor, ama FARKLI HOST'tan bakan bir zamanlayıcı
+    için tek ölçüt zaman aşımı — konteynerde her yeniden dağıtım yeni bir
+    hostname ürettiği için bu, her deploy'da üç dakikalık crash loop
+    demekti (2026-09-04'te canlıda görüldü).
+    """
+    from store import heartbeat
+
+    assert heartbeat.claim() is True
+    assert heartbeat.is_alive() is True
+
+    heartbeat.release()
+
+    assert heartbeat.read() is None
+    # Kilit boş: yeni bir zamanlayıcı beklemeden sahiplenebilir.
+    assert heartbeat.claim() is True
+
+
+def test_release_does_not_steal_a_lock_owned_by_someone_else(seeded_db):
+    """Sahiplik kontrolü olmasaydı, kilidi kaybetmiş bir süreç kapanırken
+    ÇALIŞAN zamanlayıcının kilidini silerdi."""
+    import socket
+
+    from store import heartbeat
+    from store.db import SessionLocal
+    from store.models import SchedulerHeartbeat
+
+    assert heartbeat.claim() is True
+    with SessionLocal() as session:
+        row = session.get(SchedulerHeartbeat, heartbeat.ROW_ID)
+        row.pid = 999999          # kilit artık başkasında
+        row.host = socket.gethostname()
+        session.commit()
+
+    heartbeat.release()
+
+    state = heartbeat.read()
+    assert state is not None, "başkasının kilidi silinmemeli"
+    assert state["pid"] == 999999
+
+
+def test_release_is_safe_when_no_lock_exists(seeded_db):
+    from store import heartbeat
+
+    heartbeat.release()   # patlamamalı
+    assert heartbeat.read() is None
+
+
+def test_claim_does_not_mistake_another_host_pid1_for_itself(seeded_db, monkeypatch):
+    """Konteynerde zamanlayıcı HER ZAMAN pid 1.
+
+    Kimlik yalnızca pid'e bakarsa, başka bir konteynerdeki CANLI
+    zamanlayıcının nabzı (host=X, pid=1) bu sürece (host=Y, pid=1) "benim
+    nabzım" gibi görünür ve kilit doğrudan alınır. İki zamanlayıcı birden
+    koşar, bankalar iki kat istek alır — kilidin engellemesi gereken tam
+    olarak bu (2026-09-04).
+    """
+    import os
+    import socket
+
+    from store import heartbeat
+    from store.db import SessionLocal
+    from store.models import SchedulerHeartbeat
+    from store.clock import utc_now
+
+    # Başka bir konteynerin TAZE nabzı: farklı host, aynı pid.
+    with SessionLocal() as session:
+        session.add(
+            SchedulerHeartbeat(
+                id=heartbeat.ROW_ID,
+                host="baska-konteyner",
+                pid=os.getpid(),
+                started_at=utc_now(),
+                last_beat=utc_now(),
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "bu-konteyner")
+    assert heartbeat.claim() is False, "başka host'un canlı kilidi çalındı"

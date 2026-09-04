@@ -317,6 +317,10 @@ def main() -> None:
 
         _shutdown.wait(TICK_SECONDS)
 
+    # Kilidi bırak ki bir sonraki zamanlayıcı 180 sn beklemesin. Konteynerde
+    # bu, her yeniden dağıtımdaki üç dakikalık crash loop'un tek çaresi
+    # (bkz. store/heartbeat.release).
+    heartbeat.release()
     logger.info("zamanlayıcı düzgün kapandı")
 
 
