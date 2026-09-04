@@ -1,5 +1,15 @@
 # Fon kayıt defteri — panelin fon simülasyonunda görünen fonlar.
 #
+# DOSYA İKİ YERDE OLABİLİR: veri dizininde (`data/funds.yaml`) bir kopya
+# varsa O okunur, yoksa buradaki. Panelden fon eklendiğinde veri dizinine
+# yazılır ve bu dosya oraya bir kez kopyalanır. Sebebi: konteynerde bu
+# dosya imaj katmanında duruyor ve volume yalnızca /app/data'ya bağlı —
+# buraya yazılan bir fon her `docker compose up -d`de siliniyordu
+# (bkz. collectors/fund_prices.py::_writable_funds_yaml).
+#
+# Yani konteyner kullanıyorsan panelden eklenen fonlar `data/funds.yaml`
+# dosyasındadır; buradaki liste yalnızca ilk kurulum tohumudur.
+#
 # NEDEN AYRI DOSYA: fon listesi eskiden sources.yaml'a gömülüydü ve yalnızca
 # Ak Portföy okunabiliyordu; yeni bir fon eklemek kod değişikliği
 # gerektiriyordu. Artık fon eklemek = buraya bir satır. Panelden de
@@ -51,7 +61,14 @@ funds:
   ref: hisse-senedi-fonu-hisse-senedi-yogun-fon
   name: Garanti BBVA Portföy Hisse Senedi (TL) Fonu
   benchmark: BIST100
-- code: GPB
+# KOD DÜZELTMESİ (2026-09-04): bu satır `code: GPB` yazıyordu ama
+# `birinci-para-piyasasi-fonu` sayfasının gerçek fon kodu GTL. Sağlayıcı
+# seriyi sayfadaki kodla (GTL) çekip kayıt defterindeki kodla (GPB)
+# sakladığı için panelde GPB seçen kullanıcı 530 günlük GTL serisini
+# görüyordu. Kaydın adı ve adresi baştan beri Birinci Para Piyasası
+# fonunu gösteriyordu; yanlış olan tek alan koddu, o yüzden kod düzeltildi.
+# GPB gerçekte SMART Temkinli Değişken Fon'dur; istenirse ayrıca eklenir.
+- code: GTL
   provider: garantiportfoy
   ref: birinci-para-piyasasi-fonu
   name: Garanti BBVA Portföy Birinci Para Piyasası (TL) Fonu

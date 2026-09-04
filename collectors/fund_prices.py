@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import date
 from pathlib import Path
@@ -23,12 +24,61 @@ from sqlalchemy import select
 
 from collectors import http
 from collectors.base import Collector, ParseError, SanityCheckError
-from collectors.fund_providers import PROVIDERS, REQUEST_DELAY_SECONDS, FundSpec
+from collectors.fund_providers import (
+    PROVIDERS, REQUEST_DELAY_SECONDS, FundSpec, ResolvedFund,
+)
 from store.clock import istanbul_today, utc_now
 from store.db import REPO_ROOT, SessionLocal
 from store.models import Fund, FundPrice
 
 logger = logging.getLogger(__name__)
+
+def _funds_yaml_path() -> Path:
+    """Kayıt defterinin yeri — Docker'da KALICI olan yer.
+
+    KAYBOLAN FON HATASI (2026-09-04): panelden eklenen fon
+    `<repo>/config/funds.yaml` dosyasına yazılıyordu. Konteynerde bu dosya
+    İMAJ KATMANINDA duruyor; volume yalnızca /app/data'ya bağlı. Yani
+    kullanıcının panelden eklediği her fon, bir sonraki `docker compose
+    up -d`de sessizce yok oluyordu — üstelik `seed_reference_data` kayıt
+    defterinde bulamadığı fonu (fiyatı yoksa) veritabanından da siliyor.
+
+    Çözüm: veri dizininde bir kayıt defteri varsa O kullanılır. Yoksa depo
+    içindeki dosyaya düşülür — testler ve compose'suz çalıştırma için.
+    FUNDS_YAML_PATH ile de doğrudan verilebilir.
+    """
+    acik = os.environ.get("FUNDS_YAML_PATH")
+    if acik:
+        return Path(acik)
+    if _data_funds_yaml().exists():
+        return _data_funds_yaml()
+    return REPO_ROOT / "config" / "funds.yaml"
+
+
+def _data_funds_yaml() -> Path:
+    """Veri dizinindeki (volume) kayıt defteri."""
+    return Path(os.environ.get("DATA_DIR") or (REPO_ROOT / "data")) / "funds.yaml"
+
+
+def _writable_funds_yaml() -> Path:
+    """Yeni fonun YAZILACAĞI yer.
+
+    Veri dizini varsa oraya yazılır — konteynerde kalıcı olan tek yer orası.
+    İlk yazımda depo içindeki kayıt defteri oraya KOPYALANIR; yoksa dosya
+    yalnızca yeni eklenen fonu içerir ve mevcut 11 fon bir anda kaybolurdu.
+    """
+    acik = os.environ.get("FUNDS_YAML_PATH")
+    if acik:
+        return Path(acik)
+    veri = _data_funds_yaml()
+    if not veri.parent.is_dir():
+        return REPO_ROOT / "config" / "funds.yaml"
+    if not veri.exists():
+        kaynak = REPO_ROOT / "config" / "funds.yaml"
+        if kaynak.exists():
+            veri.write_text(kaynak.read_text(encoding="utf-8"), encoding="utf-8")
+    return veri
+
 
 FUNDS_YAML = REPO_ROOT / "config" / "funds.yaml"
 
@@ -52,7 +102,7 @@ def load_fund_registry(path: Path | None = None) -> list[FundSpec]:
     Bilinmeyen sağlayıcılı satırlar ATLANIR ve loglanır: panelden elle
     eklenen bir satırdaki yazım hatası tüm toplamayı düşürmemeli.
     """
-    path = path or FUNDS_YAML
+    path = path or _funds_yaml_path()
     if not path.exists():
         return []
     with open(path, encoding="utf-8") as f:
@@ -78,6 +128,69 @@ def load_fund_registry(path: Path | None = None) -> list[FundSpec]:
     return specs
 
 
+def resolve_fund(code: str) -> ResolvedFund | None:
+    """Fon KODUNDAN sağlayıcıyı ve adres parçasını bul.
+
+    Kullanıcı isteği (2026-09-04): "sadece fon koduyla, url olmadan".
+    Sağlayıcılar sırayla denenir; ilk tanıyan kazanır. Fon kodları
+    sağlayıcılar arasında çakışmıyor (her portföy şirketinin kodu kendi ön
+    ekiyle başlıyor), o yüzden sıra sonucu değiştirmiyor.
+
+    Bulunamazsa None döner — çağıran kullanıcıya "bu kod tanınmadı" der.
+    Sessizce yanlış bir sağlayıcıya yazmaktansa hiç yazmamak doğrusu.
+    """
+    code = (code or "").strip().upper()
+    if not code:
+        return None
+    for provider in PROVIDERS.values():
+        try:
+            bulunan = provider.resolve(code)
+        except Exception as exc:  # noqa: BLE001 - bir sağlayıcı diğerini engellemesin
+            logger.warning("fon çözümleme (%s/%s) başarısız: %s", provider.key, code, exc)
+            continue
+        if bulunan is not None:
+            return bulunan
+    return None
+
+
+def add_fund_by_code(code: str, *, benchmark: str | None = None) -> ResolvedFund:
+    """Fonu YALNIZCA koduyla kayıt defterine ekle.
+
+    Adres parçasını kullanıcıya sordurmak hem zahmetliydi hem de yanlış
+    yapıştırmaya açıktı; canlıda tam olarak o oldu (bkz.
+    GarantiPortfoyProvider.fetch'teki kod doğrulaması). Adres artık
+    sağlayıcının kendi dizininden okunuyor, elle girilmiyor.
+    """
+    bulunan = resolve_fund(code)
+    if bulunan is None:
+        raise ValueError(
+            f"{(code or '').strip().upper()} hiçbir sağlayıcıda bulunamadı. "
+            f"Desteklenen sağlayıcılar: "
+            + ", ".join(p.label for p in PROVIDERS.values())
+        )
+    add_fund_to_registry(
+        code=bulunan.code, provider=bulunan.provider, ref=bulunan.ref,
+        name=bulunan.name, benchmark=benchmark,
+    )
+    return bulunan
+
+
+def collect_one(code: str):
+    """TEK fonun fiyat serisini hemen çek.
+
+    NEDEN: panelden fon eklenince ne grafik ne fiyat geliyordu; kayıt
+    defterine satır yazılıyor ama seri bir sonraki planlı koşuya (21:00)
+    kadar boş kalıyordu. Kullanıcı için bu "eklendi ama çalışmıyor" demek.
+    Ekleme kullanıcının BAŞLATTIĞI bir eylem olduğu için tek fonluk bir
+    çekim burada meşru — panelin kendi kendine toplama yapmaması kuralı
+    (tasarım §01) planlı/otomatik trafiği kastediyor.
+    """
+    spec = next((s for s in load_fund_registry() if s.code == code.strip().upper()), None)
+    if spec is None:
+        raise ValueError(f"{code}: kayıt defterinde yok")
+    return FundPriceCollector(specs=[spec]).run(trigger="manual")
+
+
 def add_fund_to_registry(
     *, code: str, provider: str, ref: str, name: str | None = None,
     benchmark: str | None = None, path: Path | None = None,
@@ -89,7 +202,7 @@ def add_fund_to_registry(
     `seed_reference_data` bir sonraki açılışta onu "kayıt defterinde yok"
     diye silerdi.
     """
-    path = path or FUNDS_YAML
+    path = path or _writable_funds_yaml()
     body = {}
     if path.exists():
         with open(path, encoding="utf-8") as f:

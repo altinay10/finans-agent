@@ -36,7 +36,10 @@ def test_shipped_registry_covers_the_requested_categories():
     """Kullanıcının saydığı kategoriler kayıt defterinde olmalı."""
     specs = {s.code: s for s in load_fund_registry()}
     assert "GAE" in specs        # BIST 30 endeks fonu
-    assert "GPB" in specs        # para piyasası
+    # Para piyasası fonu. Kod 2026-09-04'te GPB'den GTL'ye DÜZELTİLDİ:
+    # kayıt `birinci-para-piyasasi-fonu` sayfasını gösteriyordu ve o
+    # sayfanın gerçek fon kodu GTL'dir (GPB = SMART Temkinli Değişken Fon).
+    assert "GTL" in specs        # para piyasası
     assert "GTA" in specs        # altın
     assert "GTZ" in specs        # gümüş
     # Ak Portföy fonları korunmuş olmalı — sağlayıcı geçişi veri kaybettirmesin.
@@ -300,3 +303,111 @@ def test_seeding_survives_a_fund_added_without_a_name(db, tmp_path: Path, monkey
         fund = session.get(Fund, "TGT")
     assert fund is not None
     assert fund.name == "TGT"       # yer tutucu; gerçek adı toplayıcı yazar
+
+
+# ------------------------------------------- fon koduyla çözümleme (URL'siz) --
+
+GARANTI_ANASAYFA = """
+<ul>
+  <li><a href="/ucuncu-para-piyasasi-fonu"><span class="d-none">GPZ</span><span>Üçüncü Para Piyasası Fonu</span></a></li>
+  <li><a href="/smart-buyume-degisken-fon-ucuncu-degisken-fon"><span class="d-none">GPU</span><span>SMART B&uuml;y&uuml;me De&#287;i&#351;ken Fon</span></a></li>
+  <li><a href="/birinci-para-piyasasi-fonu"><span class="d-none">GTL</span><span>Birinci Para Piyasası (TL) Fonu</span></a></li>
+</ul>
+"""
+
+
+def test_garanti_index_maps_code_to_slug_and_name(monkeypatch):
+    """Kullanıcı isteği: "sadece fon koduyla url olmadan".
+
+    Ana sayfadaki gizli dizin (`<span class="d-none">KOD</span>`) tek
+    istekle kod -> slug -> ad veriyor; fon sayfalarını tek tek gezmek 70+
+    istek ederdi.
+    """
+    from collectors import http
+    from collectors.fund_providers import GarantiPortfoyProvider
+
+    class _Resp:
+        text = GARANTI_ANASAYFA
+        status_code = 200
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr(http, "get", lambda *a, **k: _Resp())
+    index = GarantiPortfoyProvider().fund_index()
+
+    assert index["GPU"].ref == "smart-buyume-degisken-fon-ucuncu-degisken-fon"
+    assert index["GTL"].ref == "birinci-para-piyasasi-fonu"
+    # HTML varlıkları çözülmeli, yoksa ad "B&uuml;y&uuml;me" diye kaydedilir.
+    assert "Büyüme" in index["GPU"].name
+
+
+def test_resolve_fund_returns_none_for_an_unknown_code(monkeypatch):
+    """Tanınmayan kod SESSİZCE bir sağlayıcıya yazılmamalı.
+
+    Yanlış sağlayıcıya yazmak, her koşuda düşen ve kimsenin bakmadığı bir
+    kayıt üretirdi; hiç yazmamak ve kullanıcıya söylemek doğrusu.
+    """
+    from collectors import http
+    from collectors.fund_prices import resolve_fund
+
+    class _Resp:
+        text = GARANTI_ANASAYFA
+        status_code = 404
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr(http, "get", lambda *a, **k: _Resp())
+    assert resolve_fund("ZZZ") is None
+
+
+def test_garanti_refuses_to_store_another_funds_series(monkeypatch):
+    """SESSİZ VERİ BOZULMASI REGRESYONU (canlıda yakalandı, 2026-09-04).
+
+    Kayıt defterinde GPB kodu `birinci-para-piyasasi-fonu` sayfasını
+    gösteriyordu; o sayfanın gerçek kodu GTL. Sağlayıcı `sayfadaki_kod or
+    fund.code` yazdığı için seriyi GTL olarak çekip GPB adına saklıyordu.
+    Panelde GPB seçen kullanıcı 530 günlük BAŞKA BİR FONUN getirisini
+    görüyordu ve hiçbir yerde hata çıkmıyordu.
+    """
+    from collectors import http
+    from collectors.fund_providers import GarantiPortfoyProvider
+
+    class _Page:
+        text = "window.fundCode = 'GTL'\n<h1>Birinci Para Piyasası</h1>"
+        status_code = 200
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr(http, "get", lambda *a, **k: _Page())
+
+    with pytest.raises(ParseError) as hata:
+        GarantiPortfoyProvider().fetch(
+            FundSpec(code="GPB", provider="garantiportfoy", ref="birinci-para-piyasasi-fonu")
+        )
+    # Hata kullanıcıya HANGİ fonun geldiğini söylemeli.
+    assert "GTL" in str(hata.value)
+
+
+def test_registry_write_goes_to_the_data_dir_and_keeps_existing_funds(tmp_path, monkeypatch):
+    """KAYBOLAN FON REGRESYONU (2026-09-04).
+
+    Panelden eklenen fon `<repo>/config/funds.yaml`a yazılıyordu; konteynerde
+    o dosya İMAJ KATMANINDA ve volume yalnızca /app/data'ya bağlı. Yani her
+    `docker compose up -d` kullanıcının eklediği fonu siliyordu.
+
+    Veri dizinine geçerken mevcut kayıt defteri oraya KOPYALANMALI; yoksa
+    dosya yalnızca yeni fonu içerir ve 11 fon bir anda kaybolur.
+    """
+    from collectors import fund_prices
+
+    veri = tmp_path / "data"
+    veri.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(veri))
+    monkeypatch.delenv("FUNDS_YAML_PATH", raising=False)
+
+    hedef = fund_prices._writable_funds_yaml()
+    assert hedef == veri / "funds.yaml"
+    # Depodaki fonlar taşınmış olmalı.
+    tasinan = {s.code for s in fund_prices.load_fund_registry(hedef)}
+    assert {"AK3", "GTL", "GTA"} <= tasinan
+
+    fund_prices.add_fund_to_registry(code="GPU", provider="garantiportfoy", ref="smart-x")
+    sonra = {s.code for s in fund_prices.load_fund_registry(hedef)}
+    assert "GPU" in sonra and {"AK3", "GTL", "GTA"} <= sonra

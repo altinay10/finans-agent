@@ -11,7 +11,9 @@ from config.loader import resolve_deposit_brackets, resolve_fund_withholding
 from core.deposit import resolve_withholding, rollover_return
 from core.fund import nearest_prior_price, simulate
 from core.models import FundSimInput
-from collectors.fund_prices import add_fund_to_registry, load_fund_registry
+from collectors.fund_prices import (
+    add_fund_by_code, collect_one, load_fund_registry,
+)
 from collectors.fund_providers import PROVIDERS
 from store import queries
 
@@ -197,54 +199,76 @@ def _spec_for(code: str):
 
 
 def _render_add_fund() -> None:
-    """Panelden fon ekleme — kullanıcının asıl istediği özellik.
+    """Panelden fon ekleme — YALNIZCA fon koduyla.
 
-    Kayıt defterine (config/funds.yaml) bir satır yazar. Veritabanına
-    doğrudan yazmak yanlış olurdu: `seed_reference_data` kayıt defterinde
-    olmayan fonu bir sonraki açılışta siler.
+    ÖNCEDEN: kullanıcı sağlayıcıyı seçiyor ve "adres parçası"nı elle
+    giriyordu (ör. `smart-buyume-degisken-fon-ucuncu-degisken-fon`). İki
+    ayrı arıza üretti:
 
-    Fiyat serisi burada ÇEKİLMEZ; panel bankalara/sağlayıcılara hiç gitmez
-    (tasarım §01). Eklendikten sonra bir sonraki toplama koşusu doldurur.
+      1. Fon eklendikten sonra ne grafik ne fiyat geliyordu — kayıt
+         defterine satır yazılıyor ama seri bir sonraki planlı koşuya
+         (21:00) kadar boş kalıyordu. Kullanıcı için "eklendi ama
+         çalışmıyor" demek.
+      2. Yanlış adres yapıştırmak sessizce BAŞKA BİR FONUN serisini
+         getiriyordu (bkz. fund_providers'taki kod doğrulaması).
+
+    Artık adres sağlayıcının kendi dizininden okunuyor ve fiyatlar hemen
+    çekiliyor.
     """
     with st.expander("➕ Fon ekle"):
         st.caption(
-            "Fon `config/funds.yaml` kayıt defterine eklenir. Fiyatlar bir "
-            "sonraki toplama koşusunda gelir — panel veri toplamaz."
+            "Fon kodunu yaz, gerisini sistem bulsun. Sağlayıcı ve sayfa adresi "
+            "otomatik çözülür, fiyat geçmişi hemen indirilir."
         )
-        provider_key = st.selectbox(
-            "Sağlayıcı", list(PROVIDERS),
-            format_func=lambda k: PROVIDERS[k].label,
-            key="add_fund_provider",
-        )
-        hint = {
-            "akportfoy": "Adres parçası = fon kodu. Örnek: `AK3` "
-                         "(akportfoy.com.tr/tr/fon/**AK3**)",
-            "garantiportfoy": "Adres parçası = sayfa kısa adı. Örnek: `altin-fonu` "
-                              "(garantibbvaportfoy.com.tr/**altin-fonu**)",
-        }.get(provider_key, "")
-        if hint:
-            st.caption(hint)
-        code = st.text_input("Fon kodu (TEFAS, 3 harf)", key="add_fund_code").strip().upper()
-        ref = st.text_input("Sağlayıcıdaki adres parçası", key="add_fund_ref").strip()
-        name = st.text_input("Ad (isteğe bağlı)", key="add_fund_name").strip()
+        code = st.text_input(
+            "Fon kodu", key="add_fund_code",
+            placeholder="ör. GPU, AK3, GTL",
+        ).strip().upper()
 
-        if st.button("Kayıt defterine ekle", key="add_fund_submit"):
-            if not code or not ref:
-                st.error("Fon kodu ve adres parçası zorunlu.")
+        if st.button("Ekle ve fiyatları getir", key="add_fund_submit"):
+            if not code:
+                st.error("Fon kodu gerekli.")
                 return
-            try:
-                add_fund_to_registry(
-                    code=code, provider=provider_key, ref=ref, name=name or None
-                )
-            except ValueError as exc:
-                st.warning(str(exc))
-                return
-            except OSError as exc:
-                st.error(f"`config/funds.yaml` yazılamadı: {exc}")
-                return
-            _registry.clear()
-            _funds.clear()
+            with st.spinner(f"{code} sağlayıcılarda aranıyor…"):
+                try:
+                    bulunan = add_fund_by_code(code)
+                except ValueError as exc:
+                    st.warning(str(exc))
+                    return
+                except OSError as exc:
+                    st.error(f"Kayıt defteri yazılamadı: {exc}")
+                    return
             st.success(
-                f"**{code}** eklendi. Fiyatları getirmek için toplayıcıyı çalıştır: "
-                "`python worker.py funds` (zamanlayıcı kuruluysa kendi saatinde gelir)."
+                f"**{bulunan.code}** bulundu: {PROVIDERS[bulunan.provider].label}"
+                + (f" — {bulunan.name}" if bulunan.name else "")
             )
+            with st.spinner(f"{bulunan.code} fiyat geçmişi indiriliyor…"):
+                try:
+                    sonuc = collect_one(bulunan.code)
+                except Exception as exc:  # noqa: BLE001 - ekleme geri alınmaz
+                    st.warning(
+                        f"Fon eklendi ama fiyatlar şimdi getirilemedi ({exc}). "
+                        "Bir sonraki toplama koşusunda gelecek."
+                    )
+                    _clear_fund_caches()
+                    return
+            _clear_fund_caches()
+            if sonuc.ok:
+                st.success(f"{sonuc.rows} fiyat kaydı indirildi. Fonu yukarıdan seçebilirsin.")
+            else:
+                st.warning(
+                    f"Fiyatlar getirilemedi: {sonuc.error or sonuc.status}. "
+                    "Bir sonraki toplama koşusunda yeniden denenecek."
+                )
+            st.rerun()
+
+
+def _clear_fund_caches() -> None:
+    """Fon listesi ve fiyat serisi önbellekleri 300 sn TTL'li.
+
+    Temizlenmezse yeni eklenen fon listede görünmez ya da görünüp "fiyat
+    yok" der — yani kullanıcı doğru yaptığı hâlde yine boş ekran görür.
+    """
+    _registry.clear()
+    _funds.clear()
+    _price_series.clear()

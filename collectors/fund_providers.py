@@ -81,6 +81,16 @@ class FundSpec:
 
 
 @dataclass(frozen=True)
+class ResolvedFund:
+    """Fon kodundan çözülen kayıt defteri satırı."""
+
+    code: str
+    provider: str
+    ref: str
+    name: str | None = None
+
+
+@dataclass(frozen=True)
 class FundSeries:
     """Bir sağlayıcının bir fon için döndürdüğü sonuç."""
 
@@ -103,6 +113,19 @@ class FundPriceProvider(ABC):
     @abstractmethod
     def parse(self, fund: FundSpec, raw: str) -> FundSeries:
         """Ham yanıtı tarih->fiyat serisine çevirir."""
+
+    def resolve(self, code: str) -> ResolvedFund | None:
+        """Fon KODUNDAN adres parçasını bul — kullanıcı URL girmesin.
+
+        Kullanıcı isteği (2026-09-04): "sadece fon koduyla, url olmadan".
+        Panelden fon eklemek, sağlayıcının sitesine gidip fonun sayfa kısa
+        adını elle bulup kopyalamayı gerektiriyordu; bu hem zahmetli hem de
+        yanlış yapıştırmaya çok açık — nitekim öyle de oldu (bkz.
+        GarantiPortfoyProvider.fetch'teki kod doğrulaması).
+
+        Bulamazsa None döner; çağıran diğer sağlayıcıları dener.
+        """
+        return None
 
 
 # ------------------------------------------------------------ Ak Portföy --
@@ -134,6 +157,28 @@ class AkPortfoyProvider(FundPriceProvider):
         )
         resp.raise_for_status()
         return resp.text
+
+    def resolve(self, code: str) -> ResolvedFund | None:
+        """Ak Portföy'de adres parçası fon kodunun kendisi: /tr/fon/AK3.
+
+        Yine de sayfa GERÇEKTEN açılıyor mu diye bakılır; yoksa var olmayan
+        bir kod kayıt defterine yazılır ve her koşuda sessizce düşerdi.
+        """
+        code = code.strip().upper()
+        try:
+            resp = http.get(
+                self.URL_TEMPLATE.format(ref=code),
+                timeout=25, headers=HEADERS, follow_redirects=True,
+            )
+        except Exception:  # noqa: BLE001 - çözümleme başarısızlığı hata değil
+            return None
+        if resp.status_code != 200 or self._FUNDVALS_RE.search(resp.text) is None:
+            return None
+        name = None
+        m = self._TITLE_RE.search(resp.text)
+        if m:
+            name = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", m.group(1))).split())
+        return ResolvedFund(code=code, provider=self.key, ref=code, name=name or None)
 
     def parse(self, fund: FundSpec, raw: str) -> FundSeries:
         match = self._FUNDVALS_RE.search(raw)
@@ -205,6 +250,16 @@ class GarantiPortfoyProvider(FundPriceProvider):
     SERIES_URL = BASE + "/webservice/fundsinddailyds"
 
     _CODE_RE = re.compile(r"window\.fundCode\s*=\s*'([A-Z0-9]+)'")
+    # Ana sayfadaki GİZLİ fon dizini: her fon için <a href="/slug">'ın içinde
+    # önce `d-none` sınıflı kod, sonra görünen ad geliyor. Tek istekle 70+
+    # fonun kod -> slug -> ad eşlemesi çıkıyor; fonu koddan bulmanın en ucuz
+    # yolu bu (fon sayfalarını tek tek gezmek 70+ istek ederdi).
+    _INDEX_RE = re.compile(
+        r'<a\s+href="/([a-z0-9][a-z0-9\-]*)"\s*>\s*'
+        r'<span class="d-none">([A-Z0-9]{2,6})</span>\s*'
+        r"<span>(.*?)</span>",
+        re.DOTALL,
+    )
     _NAME_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.DOTALL)
     _TITLE_RE = re.compile(r"<title>(.*?)</title>", re.DOTALL)
 
@@ -212,6 +267,28 @@ class GarantiPortfoyProvider(FundPriceProvider):
         page_url = self.PAGE_TEMPLATE.format(ref=fund.ref.strip("/"))
         page = http.get(page_url, timeout=30, headers=HEADERS, follow_redirects=True)
         page.raise_for_status()
+
+        # KOD DOĞRULAMASI — sessiz veri bozulmasına karşı.
+        #
+        # Burada eskiden `code = sayfadaki_kod or fund.code` yazıyordu: yani
+        # sayfanın kodu kayıt defterindekinden FARKLIYSA sayfanınki
+        # kullanılıp seri çekiliyor, sonra persist onu KAYIT DEFTERİNDEKİ
+        # kodla saklıyordu. Yanlış bir slug girildiğinde sonuç sessizce
+        # BAŞKA BİR FONUN getirisi oluyordu.
+        #
+        # Canlıda gerçekleşti (2026-09-04): GPB kaydı
+        # `birinci-para-piyasasi-fonu` sayfasını gösteriyordu, o sayfanın
+        # kodu ise GTL. Panelde GPB seçen kullanıcı 530 günlük GTL serisini
+        # görüyordu. Bir yatırım aracında bu, sayfa yapısı değişmesinden çok
+        # daha tehlikeli bir hata: hiçbir yerde patlamıyor.
+        sayfa_kodu = self._code_from_page(page.text)
+        if sayfa_kodu and sayfa_kodu != fund.code:
+            raise ParseError(
+                f"{fund.code}: '{fund.ref}' sayfasının fon kodu {sayfa_kodu}. "
+                f"Kayıt defteri yanlış fonu gösteriyor — seri ÇEKİLMEDİ. "
+                f"Doğru adresi bulmak için fonu koduyla yeniden ekle."
+            )
+        code = sayfa_kodu or fund.code
 
         time.sleep(REQUEST_DELAY_SECONDS)
         token_resp = http.get(
@@ -244,7 +321,6 @@ class GarantiPortfoyProvider(FundPriceProvider):
             datetime.strptime(last_date, "%Y-%m-%d").date() - timedelta(days=HISTORY_DAYS)
         ).isoformat()
 
-        code = self._code_from_page(page.text) or fund.code
         time.sleep(REQUEST_DELAY_SECONDS)
         series_resp = http.post(
             self.SERIES_URL,
@@ -268,6 +344,25 @@ class GarantiPortfoyProvider(FundPriceProvider):
             {"code": code, "page_title": self._name_from_page(page.text),
              "series": _unwrap(series_resp.json())}
         )
+
+    def fund_index(self) -> dict[str, ResolvedFund]:
+        """Ana sayfadaki dizinden kod -> fon eşlemesi (tek HTTP isteği)."""
+        resp = http.get(self.BASE + "/", timeout=30, headers=HEADERS, follow_redirects=True)
+        resp.raise_for_status()
+        index: dict[str, ResolvedFund] = {}
+        for slug, code, name in self._INDEX_RE.findall(resp.text):
+            index[code] = ResolvedFund(
+                code=code, provider=self.key, ref=slug,
+                name=" ".join(html.unescape(re.sub(r"<[^>]+>", " ", name)).split()) or None,
+            )
+        return index
+
+    def resolve(self, code: str) -> ResolvedFund | None:
+        code = code.strip().upper()
+        try:
+            return self.fund_index().get(code)
+        except Exception:  # noqa: BLE001 - çözümleme başarısızlığı hata değil
+            return None
 
     def _code_from_page(self, page: str) -> str | None:
         match = self._CODE_RE.search(page)
