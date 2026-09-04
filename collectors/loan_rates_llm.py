@@ -104,13 +104,33 @@ def _appears_in_text(rate_percent: float, text: str) -> bool:
 
     Yuvarlama toleransı yok ve olmamalı: "%2,99" ile "%2.99" aynı sayıdır
     ama "%3,00" başka bir orandır.
+
+    SAYI SINIRI ŞART (2026-09-05'te canlıda yakalandı). Kontrol düz bir
+    `alt dizge var mı` idi ve YUVARLAK ORANLARDA neredeyse hiçbir şey
+    doğrulamıyordu: "%5,00" -> `"5.00".rstrip("0").rstrip(".")` -> "5",
+    yani tek karakterlik bir arama. "5" ise sayfadaki 5.014 TL taksitinin,
+    100.000 TL tutarının, 24 aylık vadenin ya da 04.09.2026 tarihinin
+    içinde bulunuyordu. Yani %2,00 gibi bir oran "vade 24 ay" yazan bir
+    sayfada bile "zeminlenmiş" sayılıyordu.
+
+    Somut sonuç: qwen-flash Burgan'ın konut ve ihtiyaç oranlarını %5,00
+    olarak döndürdü (sayfa 3,25% ve 3,75% yazıyor; 5,014 ve 5,084 TL
+    TAKSİT tutarlarıydı) ve zeminleme bunu geçirdi. Yanlış faiz oranı
+    veritabanına yazıldı — eksik veriden çok daha kötüsü.
+
+    Artık aday sayı, daha uzun bir sayının PARÇASI olamaz: iki yanında
+    rakam, nokta veya virgül bulunmamalı. "%5 faiz" hâlâ geçerli, "5.014
+    TL" içindeki 5 değil.
     """
     formatted = f"{rate_percent:.2f}".rstrip("0").rstrip(".")
     candidates = {formatted, formatted.replace(".", ",")}
     # 2.9 -> "2,90" biçimi de sayfada geçebilir
     two_dp = f"{rate_percent:.2f}"
     candidates |= {two_dp, two_dp.replace(".", ",")}
-    return any(c in text for c in candidates)
+    return any(
+        re.search(r"(?<![\d.,])" + re.escape(c) + r"(?![\d.,])", text)
+        for c in candidates
+    )
 
 
 class LlmLoanRateCollector(Collector):
@@ -158,6 +178,15 @@ class LlmLoanRateCollector(Collector):
         "DİĞER KURALLAR:\n"
         "- Yalnızca sayfada AÇIKÇA YAZAN oranları döndür. Hesaplama yapma, "
         "ortalama alma, tahmin etme.\n"
+        # EKSİKSİZLİK: sayfalarda oran İKİ yerde birden duruyor — tanıtım
+        # cümlesinde ("aylık %3,25 faiz ile") ve kampanya tablosunda
+        # ("5,00 %"). Model yalnızca birini döndürürse persist'in "en
+        # düşüğü sakla" kuralı seçemiyor ve kullanıcı, bankanın ilan
+        # ettiğinden yüksek bir oran görüyor. Burgan'da tam olarak bu oldu
+        # (2026-09-05): tablodaki %5,00 geldi, cümledeki %3,25 gelmedi.
+        "- Sayfadaki TÜM oranları döndür, ilkini bulunca durma. Aynı ürün "
+        "için hem tanıtım cümlesinde hem tabloda oran varsa İKİSİNİ DE ayrı "
+        "kayıt olarak yaz; hangisinin geçerli olduğuna sen karar verme.\n"
         "- Oran AYLIK yüzde olmalı (2.99 gibi). Yıllık maliyet oranını "
         "(%68 gibi) DÖNDÜRME.\n"
         "- loan_type: ihtiyaç/tüketici -> personal, konut/mortgage -> "

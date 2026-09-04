@@ -167,8 +167,41 @@ def extract(
 
     try:
         content = resp.choices[0].message.content or ""
-        parsed = wrapper.model_validate(json.loads(content))
-        rows = list(parsed.rows)
+        ham = json.loads(content)
+        # SATIR BAZINDA DOĞRULAMA — tek bozuk satır diğerlerini götürmesin.
+        #
+        # Eskiden tüm liste `wrapper.model_validate` ile bir kerede
+        # doğrulanıyordu: bir satır şema kontrolüne takılınca (ör. bant
+        # dışı oran) İSTİSNA yükseliyor ve GEÇERLİ satırlar da dahil olmak
+        # üzere yanıtın tamamı çöpe gidiyordu — harcanan token'la birlikte.
+        #
+        # 2026-09-05'te canlıda görüldü: DenizBank taşıt sayfasında model
+        # 5 satır döndürdü, 4'ü kredi/değer oranını (%70, %50, %30) aylık
+        # faiz sanmıştı ve bant kontrolü onları haklı olarak reddetti.
+        # Ama 5. satır geçerliydi; hepsi birden atıldığı için DenizBank'ın
+        # taşıt kredisi tablodan tamamen kayboldu.
+        #
+        # Elemenin kendisi doğru; yanlış olan geçerli satırları da elemek.
+        # Zeminleme ve erişilebilirlik kontrolleri bunun ARDINDAN yine
+        # çalışıyor, yani gevşeme yok.
+        satirlar = ham.get("rows") if isinstance(ham, dict) else ham
+        if not isinstance(satirlar, list):
+            raise ValueError(f"beklenen liste değil: {type(satirlar).__name__}")
+        rows, elenen = [], []
+        for ham_satir in satirlar:
+            try:
+                rows.append(schema.model_validate(ham_satir))
+            except Exception as satir_hata:  # noqa: BLE001
+                elenen.append(str(satir_hata).split("\n")[0][:120])
+        if satirlar and not rows:
+            raise ValueError(
+                f"{len(satirlar)} satırın hiçbiri şemaya uymadı: {'; '.join(elenen[:3])}"
+            )
+        if elenen:
+            logger.warning(
+                "%s/%s: %s satır şemaya uymadı, elendi (%s geçerli): %s",
+                collector, trigger_source, len(elenen), len(rows), "; ".join(elenen[:3]),
+            )
     except Exception as exc:  # noqa: BLE001 - token yandı ama sonuç kullanılamadı
         record_llm_call(
             trigger_error=trigger_error, trigger_source=trigger_source,

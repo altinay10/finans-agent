@@ -479,3 +479,131 @@ def test_a_hinted_page_that_does_return_the_right_type_is_kept(db, monkeypatch):
         "qnb_konut": {"ok": True, "body": "konut kredisi aylık %2,99"}
     }).encode())
     assert [r.loan_type for r in kayitlar] == ["housing"]
+
+
+# ------------------------------------------------ zeminleme: sayı sınırı ----
+
+@pytest.mark.parametrize("oran,metin,ad", [
+    (5.00, "aylık taksit 5.014 TL", "taksit tutarı"),
+    (3.00, "100.000 TL'ye kadar 36 ay", "kredi tutarı"),
+    (2.00, "vade 24 ay", "vade"),
+    (4.00, "geçerlilik 04.09.2026", "tarih"),
+    (5.00, "yıllık maliyet %65.014", "daha uzun bir oranın parçası"),
+])
+def test_a_round_rate_is_not_grounded_by_a_digit_inside_another_number(oran, metin, ad):
+    """ZEMİNLEME AÇIĞI REGRESYONU (canlıda yakalandı, 2026-09-05).
+
+    Kontrol düz bir "alt dizge var mı" idi. "%5,00" ->
+    `"5.00".rstrip("0").rstrip(".")` -> "5", yani TEK KARAKTERLİK arama.
+    Sonuçta %2,00 gibi bir oran "vade 24 ay" yazan bir sayfada bile
+    zeminlenmiş sayılıyordu — yani yuvarlak oranlar için bu güvence hiç
+    yoktu.
+
+    Somut zarar: qwen-flash Burgan'ın konut ve ihtiyaç oranını %5,00 diye
+    döndürdü (sayfa 3,25% ve 3,75% yazıyor; 5,014 TL bir TAKSİT tutarıydı)
+    ve zeminleme geçirdi. Yanlış faiz oranı veritabanına yazıldı.
+    """
+    assert _appears_in_text(oran, metin) is False, ad
+
+
+@pytest.mark.parametrize("oran,metin,ad", [
+    (5.00, "faiz oranı %5 uygulanır", "gerçek yuvarlak oran"),
+    (5.00, "aylık %5,00 faiz", "iki ondalıklı yazım"),
+    (3.25, "interest rate of 3.25% per month", "Burgan konut sayfasının GERÇEK oranı"),
+    (3.75, "subject to an interest rate of 3.75%", "Burgan ihtiyaç sayfasının GERÇEK oranı"),
+    (2.99, "aylık %2,99 faiz", "Türkçe virgül"),
+    (3.09, "%3,09'dan başlayan", "kesme işareti bitişik"),
+])
+def test_a_real_rate_is_still_grounded_after_the_boundary_fix(oran, metin, ad):
+    """Sınır kontrolü fazla dar olmamalı — gerçek oranlar geçmeye devam etmeli."""
+    assert _appears_in_text(oran, metin) is True, ad
+
+
+# --------------------------------------- satır bazında şema doğrulaması ----
+
+def test_one_invalid_row_does_not_discard_the_valid_ones(db, monkeypatch):
+    """TEK BOZUK SATIR REGRESYONU (canlıda yakalandı, 2026-09-05).
+
+    Yanıtın tamamı `wrapper.model_validate` ile bir kerede doğrulanıyordu:
+    bir satır bant kontrolüne takılınca istisna yükseliyor ve GEÇERLİ
+    satırlar da dahil yanıtın tamamı çöpe gidiyordu — harcanan token'la
+    birlikte.
+
+    DenizBank taşıt sayfasında model 5 satır döndürdü; 4'ü kredi/değer
+    oranını (%70, %50, %30) aylık faiz sanmıştı ve bant kontrolü onları
+    HAKLI olarak reddetti. Ama 5. satır geçerliydi ve hepsi birden
+    atıldığı için DenizBank'ın taşıt kredisi tablodan tamamen kayboldu.
+    """
+    import json as _json
+
+    import llm.extract as llm_extract
+    import llm.settings as settings
+    from collectors.loan_rates_llm import LlmLoanRow
+
+    monkeypatch.setattr(settings, "LLM_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(settings, "LLM_API_KEY", "sahte")
+
+    yanit = _json.dumps({"rows": [
+        {"institution": "DENIZBANK", "loan_type": "vehicle",
+         "monthly_rate_percent": 70.0, "rate_sentence": "kredi/değer oranı %70",
+         "available_to_all": True},                       # bant dışı — elenmeli
+        {"institution": "DENIZBANK", "loan_type": "vehicle",
+         "monthly_rate_percent": 4.14, "rate_sentence": "aylık %4,14 faiz",
+         "available_to_all": True},                       # GEÇERLİ — kalmalı
+    ]})
+
+    class _Msg:  content = yanit
+    class _Choice:  message = _Msg()
+    class _Resp:
+        choices = [_Choice()]
+        usage = type("u", (), {"prompt_tokens": 10, "completion_tokens": 5})()
+
+    class _Client:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw): return _Resp()
+
+    monkeypatch.setattr(llm_extract, "get_client", lambda: _Client())
+    llm_extract.reset_budget()
+
+    satirlar = llm_extract.extract(
+        "aylık %4,14 faiz", LlmLoanRow, collector="loan_rates_llm",
+        trigger_source="denizbank_tasit",
+    )
+    assert len(satirlar) == 1, "geçerli satır korunmalı"
+    assert satirlar[0].monthly_rate_percent == 4.14
+
+
+def test_a_response_where_every_row_is_invalid_still_fails(db, monkeypatch):
+    """Eleme gevşememeli: hiçbir satır geçerli değilse bu bir hatadır."""
+    import json as _json
+
+    import llm.extract as llm_extract
+    import llm.settings as settings
+    from collectors.loan_rates_llm import LlmLoanRow
+
+    monkeypatch.setattr(settings, "LLM_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(settings, "LLM_API_KEY", "sahte")
+
+    yanit = _json.dumps({"rows": [
+        {"institution": "X", "loan_type": "vehicle", "monthly_rate_percent": 70.0,
+         "rate_sentence": "s", "available_to_all": True},
+    ]})
+
+    class _Msg:  content = yanit
+    class _Choice:  message = _Msg()
+    class _Resp:
+        choices = [_Choice()]
+        usage = type("u", (), {"prompt_tokens": 10, "completion_tokens": 5})()
+    class _Client:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw): return _Resp()
+
+    monkeypatch.setattr(llm_extract, "get_client", lambda: _Client())
+    llm_extract.reset_budget()
+
+    with pytest.raises(Exception):
+        llm_extract.extract("metin", LlmLoanRow, collector="loan_rates_llm")
