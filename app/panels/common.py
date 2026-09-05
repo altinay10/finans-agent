@@ -8,6 +8,7 @@ bir panel, saat 14:09'da bakan kullanıcıya veriyi üç saat bayat gösterir.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -76,3 +77,30 @@ INSTITUTION_LABELS = {
 def institution_label(code: str) -> str:
     """Bilinmeyen kod gelirse kodun kendisini döndür — panel patlamasın."""
     return INSTITUTION_LABELS.get(code, code)
+
+
+# --- para tutarı biçimleme --------------------------------------------------
+#
+# Panelin tablolarında tutarlar zaten `{:,.0f}` ile yazılıyor (2,500,000).
+# Anapara kutusu ise ham `2500000` gösteriyordu; aynı sayfada iki ayrı
+# gösterim vardı ve yedi haneli tutarda basamak saymadan okumak zordu.
+# Ayırıcı bilinçli olarak virgül: panelin geri kalanıyla aynı olsun diye.
+
+
+def format_amount(value: int) -> str:
+    """2500000 -> '2,500,000'. Kutuda ve metinlerde aynı gösterim."""
+    return f"{value:,}"
+
+
+def parse_amount(raw: str) -> int | None:
+    """Kullanıcının yazdığı tutarı tam sayıya çevirir; rakam yoksa None.
+
+    Ayırıcıyı biz koyuyoruz ama kullanıcı kendi alışkanlığıyla yazıyor:
+    '2,500,000' da '2.500.000' da '2 500 000' da gelir. Bu yüzden rakam
+    dışındaki her şey atılıyor. Anapara tam sayı bir alan (adım 50.000),
+    ondalık ayırıcı ayrımı yapmaya gerek yok — '.' her zaman basamak
+    ayırıcısıdır. Eksi işareti de eleniyor; kutunun eski hâlindeki
+    min_value=0 sınırı böylece korunuyor.
+    """
+    digits = re.sub(r"\D", "", raw or "")
+    return int(digits) if digits else None

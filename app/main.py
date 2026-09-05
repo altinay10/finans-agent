@@ -10,6 +10,7 @@ if str(REPO_ROOT) not in sys.path:
 import streamlit as st
 
 from app.panels import agent, deposit, fund, fx, loan, logs, sources, status
+from app.panels.common import format_amount, parse_amount
 from store.db import init_db
 
 st.set_page_config(page_title="Finans Agent", layout="wide")
@@ -34,8 +35,7 @@ st.divider()
 st.markdown(
     """
     <style>
-    .st-key-anapara [data-testid="stNumberInputContainer"] { min-height: 3.25rem; }
-    .st-key-anapara [data-testid="stNumberInputField"] {
+    .st-key-anapara input {
         font-size: 1.5rem;
         height: 3.25rem;
     }
@@ -45,9 +45,37 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-principal = st.number_input(
-    "Anapara (TL)", min_value=0, value=1_000_000, step=50_000, key="anapara"
-)
+# NEDEN number_input DEĞİL: basamakları ayıramıyor. `format` bir printf
+# dizgesi (sprintf.js) ve orada binlik ayırıcı bayrağı yok; Streamlit ayrıca
+# dizgeyi `float(format % 2)` ile doğruluyor, yani "%,d" gibi bir şey daha
+# oluşturulurken hata veriyor. Bu yüzden kutu bir metin alanı ve tutar
+# `parse_amount`/`format_amount` ile çevriliyor.
+#
+# BEDELİ: kutunun -/+ adım düğmeleri gitti (eski adım 50.000). Rakamların
+# okunurluğu, klavyeden zaten yazılan bir alandaki düğmelerden önce geldi.
+DEFAULT_PRINCIPAL = 1_000_000
+
+if "anapara" not in st.session_state:
+    st.session_state.anapara = format_amount(DEFAULT_PRINCIPAL)
+    st.session_state.anapara_gecerli = DEFAULT_PRINCIPAL
+
+
+def _anapara_duzelt() -> None:
+    """Kutuyu her değişiklikten sonra kanonik gösterime çevirir.
+
+    Kullanıcı "2500000" yazsa da kutuda "2,500,000" görür. İçinde hiç rakam
+    yoksa son geçerli tutara dönülür; sessizce sıfıra düşmek bütün sekmelerin
+    hesabını fark edilmeden bozardı.
+    """
+    parsed = parse_amount(st.session_state.anapara)
+    if parsed is None:
+        parsed = st.session_state.anapara_gecerli
+    st.session_state.anapara_gecerli = parsed
+    st.session_state.anapara = format_amount(parsed)
+
+
+st.text_input("Anapara (TL)", key="anapara", on_change=_anapara_duzelt)
+principal = st.session_state.anapara_gecerli
 
 tab_fx, tab_dep, tab_loan, tab_fund, tab_agent, tab_sources, tab_logs = st.tabs(
     ["Döviz", "Mevduat & Kar Payı", "Kredi", "Fon Simülasyonu", "Agent",

@@ -4,36 +4,8 @@
     {
       "name": "finans-agent-dashboard",
       "runtimeExecutable": "venv/bin/streamlit",
-      "runtimeArgs": [
-        "run",
-        "app/main.py",
-        "--server.address",
-        "127.0.0.1",
-        "--server.port",
-        "8501",
-        "--server.headless",
-        "true"
-      ],
+      "runtimeArgs": ["run", "app/main.py", "--server.address", "127.0.0.1", "--server.port", "8501", "--server.headless", "true"],
       "port": 8501
-    },
-    {
-      "name": "finans-agent-dashboard-dev",
-      "runtimeExecutable": "/Users/hectorpiece/Documents/Finansal Veri Hesaplama Ajanı/venv/bin/python",
-      "runtimeArgs": [
-        "-m",
-        "streamlit",
-        "run",
-        "/Users/hectorpiece/Documents/Finansal Veri Hesaplama Ajanı/app/main.py",
-        "--server.address",
-        "127.0.0.1",
-        "--server.port",
-        "8502",
-        "--server.headless",
-        "true",
-        "--browser.gatherUsageStats",
-        "false"
-      ],
-      "port": 8502
     }
   ]
 }

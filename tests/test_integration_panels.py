@@ -228,6 +228,52 @@ def test_fetched_caption_handles_missing_timestamps():
     assert "bilinmiyor" in fetched_caption([])
 
 
+# ------------------------------------------------- anapara kutusu (5. tur) ----
+#
+# Kutu artık metin alanı: basamakları ayırabilmek için. Yazılanı sayıya
+# çeviren `parse_amount` bütün sekmelerin hesabının girdisi; burada yanlış
+# okunan bir tutar panelin tamamını sessizce yanıltır.
+
+
+def test_parse_amount_accepts_every_separator_the_user_might_type():
+    from app.panels.common import parse_amount
+
+    for raw in ["2,500,000", "2.500.000", "2 500 000", "2500000"]:
+        assert parse_amount(raw) == 2_500_000
+
+
+def test_parse_amount_returns_none_when_there_is_no_digit():
+    from app.panels.common import parse_amount
+
+    # Kutu bunu son geçerli tutara döndürmek için kullanıyor; 0 dönseydi
+    # boşa basan kullanıcı bütün hesapları sıfırlardı.
+    assert parse_amount("") is None
+    assert parse_amount("   ") is None
+    assert parse_amount("abc") is None
+
+
+def test_parse_amount_never_returns_a_negative_amount():
+    from app.panels.common import parse_amount
+
+    # Eski kutudaki min_value=0 sınırının karşılığı: eksi işareti eleniyor.
+    assert parse_amount("-500000") == 500_000
+
+
+def test_format_amount_groups_digits_like_the_tables():
+    from app.panels.common import format_amount
+
+    assert format_amount(2_500_000) == "2,500,000"
+    assert format_amount(999) == "999"
+    assert format_amount(0) == "0"
+
+
+def test_amount_round_trips_through_the_box():
+    from app.panels.common import format_amount, parse_amount
+
+    for value in [0, 999, 50_000, 1_000_000, 12_345_678]:
+        assert parse_amount(format_amount(value)) == value
+
+
 # ----------------------------------------------- kredi vade sınırları (4. tur) ----
 #
 # Panel, bankanın ilan ettiği vade/tutar sınırının dışına çıkıldığında
