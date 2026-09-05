@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
+
+from config.loader import funds_yaml_path
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -123,8 +125,15 @@ def _configured_funds() -> list[dict]:
     bölümüne düşülür. Sunucuda eski bir kopya üzerine güncelleme yapıldığında
     fon listesinin bir anda boşalmaması için.
     """
-    if FUNDS_YAML.exists():
-        with open(FUNDS_YAML, encoding="utf-8") as f:
+    # DİKKAT — YOLU BURADA HESAPLAMA. `config/funds.yaml` sabitini okumak,
+    # Docker'da panelden eklenen fonların SESSİZCE SİLİNMESİNE yol açıyordu:
+    # panel kayıt defterini `data/funds.yaml`'a (volume) yazıyor, buradaki
+    # okuma ise imaj katmanındaki BAYAT kopyayı görüyordu; fonu bulamayınca
+    # da (henüz fiyatı yoksa) katalogdan siliyordu. Tek çözümleyici:
+    # config.loader.funds_yaml_path().
+    kayit_defteri = funds_yaml_path()
+    if kayit_defteri.exists():
+        with open(kayit_defteri, encoding="utf-8") as f:
             return (yaml.safe_load(f) or {}).get("funds", []) or []
     if SOURCES_YAML.exists():
         with open(SOURCES_YAML, encoding="utf-8") as f:

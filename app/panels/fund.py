@@ -12,7 +12,7 @@ from core.deposit import resolve_withholding, rollover_return
 from core.fund import nearest_prior_price, simulate
 from core.models import FundSimInput
 from collectors.fund_prices import (
-    add_fund_by_code, collect_one, load_fund_registry,
+    add_fund_by_code, add_provider_catalog, collect_one, load_fund_registry,
 )
 from collectors.fund_providers import PROVIDERS
 from store import queries
@@ -177,6 +177,20 @@ def render(principal: float) -> None:
             "doğrudur, ama bu sayı fon fiyatı değildir."
         )
 
+    # SEYREK SERİ UYARISI. Ak/Garanti tek istekte kesintisiz günlük geçmiş
+    # veriyor; Yapı Kredi Portföy uç noktası 30 günden uzun aralıkta seriyi
+    # AYLIĞA seyreltiyor (bkz. fund_providers/ykportfoy.py). Senaryo
+    # başlangıç tarihleri zaten tabloda yazılı, ama grafiğe bakan biri
+    # "veri eksik mi?" diye düşünmesin diye sebebi açıkça söyleniyor.
+    gunluk_orani = _daily_coverage(prices)
+    if gunluk_orani is not None and gunluk_orani < 0.5:
+        st.caption(
+            f"ℹ️ {provider_label} uzak geçmişi günlük değil, **aylık/haftalık** "
+            "yayımlıyor; grafikteki seyreklik bundandır. Senaryolar hedef "
+            "tarihten önceki en yakın fiyatı kullanır ve tabloda **gerçek "
+            "başlangıç tarihi** yazılıdır — hesap bu yüzden doğrudur."
+        )
+
     value_label = "Fiyat" if unit_value else "1.000 TL'nin değeri"
     price_df = pd.DataFrame(prices, columns=["Tarih", value_label]).sort_values("Tarih")
     fig = px.line(
@@ -189,6 +203,28 @@ def render(principal: float) -> None:
 
 
 # ------------------------------------------------------------- fon ekle ----
+
+
+def _daily_coverage(prices: list[tuple[date, float]]) -> float | None:
+    """Serinin TAMAMINDA gün başına düşen nokta oranı (0-1).
+
+    SERİNİN TAMAMI ölçülür, son birkaç ay değil. İlk sürüm son 90 güne
+    bakıyordu ve uyarı hiç çıkmıyordu: Yapı Kredi Portföy'ün son iki ayı
+    zaten günlük, seyrek olan UZAK GEÇMİŞİ — yani grafiğe bakan kişinin
+    "veri eksik mi?" diye sorduğu yer. Uyarının derdi orası.
+
+    Ölçek: kesintisiz günlük bir seri hafta sonları kapalı olduğu için
+    en fazla ~0,71 (5/7) çıkar; Ak Portföy'de ölçülen 0,68. Aylık omurgalı
+    bir seride ise 0,25 civarı. 0,5 eşiği ikisini rahatça ayırıyor.
+    """
+    if len(prices) < 2:
+        return None
+    ilk = min(p[0] for p in prices)
+    son = max(p[0] for p in prices)
+    kapsam = (son - ilk).days
+    if kapsam <= 0:
+        return None
+    return min(1.0, len(prices) / kapsam)
 
 
 def _spec_for(code: str):
@@ -261,6 +297,59 @@ def _render_add_fund() -> None:
                     "Bir sonraki toplama koşusunda yeniden denenecek."
                 )
             st.rerun()
+
+        _render_add_catalog()
+
+
+def _render_add_catalog() -> None:
+    """Bir sağlayıcının TÜM fonlarını tek seferde ekle.
+
+    NEDEN: kullanıcının şikâyeti "fon sayısı çok az"dı. Yapı Kredi
+    Portföy'de 76 açık fon var; bunları tek tek koduyla eklemek 76 ayrı
+    işlem demekti. Katalog sağlayıcının kendi dizininden tek istekte
+    okunuyor.
+
+    FİYATLAR BURADA ÇEKİLMİYOR: 76 fon için fiyat toplamak fon başına
+    birkaç istek eder ve paneli dakikalarca kilitlerdi. Kayıt defterine
+    yazılır, seriyi gece koşusu toplar — ve bu açıkça söylenir, yoksa
+    kullanıcı "ekledim ama grafik yok" diye düşünür.
+    """
+    secenekler = {
+        p.label: key
+        for key, p in PROVIDERS.items()
+        if p.catalog.__qualname__ != "FundPriceProvider.catalog"
+    }
+    if not secenekler:
+        return
+
+    st.divider()
+    st.caption(
+        "Tek tek eklemek yerine bir sağlayıcının tüm fonlarını kayıt "
+        "defterine al. Fiyat geçmişi bir sonraki toplama koşusunda gelir."
+    )
+    etiket = st.selectbox(
+        "Sağlayıcı", list(secenekler), key="add_catalog_provider"
+    )
+    if st.button("Tüm fonlarını ekle", key="add_catalog_submit"):
+        with st.spinner(f"{etiket} kataloğu okunuyor…"):
+            try:
+                eklenen = add_provider_catalog(secenekler[etiket])
+            except ValueError as exc:
+                st.warning(str(exc))
+                return
+            except OSError as exc:
+                st.error(f"Kayıt defteri yazılamadı: {exc}")
+                return
+        _clear_fund_caches()
+        if eklenen:
+            st.success(
+                f"{len(eklenen)} fon eklendi. Fiyat geçmişi bir sonraki "
+                "toplama koşusunda indirilecek; hemen istersen "
+                "`python worker.py funds` çalıştır."
+            )
+        else:
+            st.info("Eklenecek yeni fon yok — katalogdaki her fon zaten kayıtlı.")
+        st.rerun()
 
 
 def _clear_fund_caches() -> None:

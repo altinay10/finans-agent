@@ -1,27 +1,7 @@
-"""Fon fiyat SAĞLAYICILARI — her portföy şirketi için bir adaptör.
+"""Garanti BBVA Portföy — anonim bearer token + JSON seri uç noktası.
 
-PLAN.md madde 6. Asıl sorun "hangi site" değildi: fon listesi
-`config/sources.yaml`'a gömülüydü ve tek bir sağlayıcıyı (Ak Portföy)
-okuyabilen tek bir toplayıcı vardı. Yeni bir fon eklemek KOD DEĞİŞİKLİĞİ
-gerektiriyordu — kullanıcının istediği ise "istediğim fonu ekleyebilmek".
-
-Bu modül o bağı koparır: fon listesi `config/funds.yaml`'da bir satır,
-sağlayıcı ise burada bir sınıf. Panelden fon eklemek yalnızca YAML'a satır
-yazar (bkz. app/panels/fund.py).
-
-TEFAS neden yok: `tefas.gov.tr` F5 Shape bot-challenge arkasında
-(`window["bobcmn"]`, `/TSPD/`, `DOSL7.challenge.support_id`). Aşmak
-obfuscated JS çalıştırıp çerez üretmek, yani bot tespiti atlatmak demek.
-Kullanıcının robots.txt kararı bunu KAPSAMIYOR; bilinçli olarak yapılmıyor.
-
-SERİ TÜRÜ FARKI — önemli:
-  * Ak Portföy    -> BİRİM PAY FİYATI (mutlak TL)
-  * Garanti Portföy -> 1.000 TL'nin zaman içindeki DEĞERİ (endeks)
-İkisi de simülasyon için yeterlidir çünkü `core/fund.py` yalnızca
-başlangıç/bitiş ORANINI kullanır (units = anapara/başlangıç fiyatı).
-Ama panelde "birim pay fiyatı" diye gösterilirse Garanti fonlarında
-yanıltıcı olur; bu yüzden sağlayıcı `price_is_unit_value` bayrağını taşır
-ve panel etiketini ona göre seçer.
+DİKKAT: dönen seri BİRİM PAY FİYATI DEĞİL, "1.000 TL yatırılsaydı"
+endeksidir (bkz. base.py modül docstring'i, `price_is_unit_value`).
 """
 from __future__ import annotations
 
@@ -30,192 +10,23 @@ import json
 import logging
 import re
 import time
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from collectors import http
 from collectors.base import ParseError
+from collectors.fund_providers.base import (
+    EQUITY_HEAVY_MARKER,
+    HEADERS,
+    HISTORY_DAYS,
+    REQUEST_DELAY_SECONDS,
+    FundPriceProvider,
+    FundSeries,
+    FundSpec,
+    ResolvedFund,
+    epoch_ms_to_istanbul_date,
+)
 
 logger = logging.getLogger(__name__)
-
-ISTANBUL = ZoneInfo("Europe/Istanbul")
-REQUEST_DELAY_SECONDS = 2.0  # bkz. config/sources.yaml: collection_etiquette
-
-# HTTP başlıkları latin-1 kodlanır; Türkçe karakter kullanma (bkz.
-# collectors/participation_rates.py'deki aynı tuzak).
-HEADERS = {"User-Agent": "finans-agent/0.1"}
-
-EQUITY_HEAVY_MARKER = "hisse senedi yoğun fon"
-
-# Panelin ihtiyacı ~400 gün; 2 yıl istemek hem yeterli hem de sunucuyu
-# gereksiz yormaz. Ak Portföy zaten tüm geçmişi tek sayfada veriyor.
-HISTORY_DAYS = 760
-
-
-def epoch_ms_to_istanbul_date(epoch_ms: int) -> date:
-    """Epoch ms -> İSTANBUL takvim günü.
-
-    UTC kullanmak tarihleri bir gün geriye kaydırır: Ak Portföy'ün damgaları
-    İstanbul gece yarısına denk geliyor (1514840400000 = 2018-01-02 00:00 +03)
-    ve UTC olarak yorumlanınca 2018-01-01 olur. Fon simülasyonu o zaman
-    yanlış günün fiyatını kullanır.
-    """
-    return datetime.fromtimestamp(epoch_ms / 1000, ISTANBUL).date()
-
-
-@dataclass(frozen=True)
-class FundSpec:
-    """config/funds.yaml'daki bir satır."""
-
-    code: str                    # TEFAS kodu: 'AK3', 'GTA'
-    provider: str                # 'akportfoy' | 'garantiportfoy'
-    ref: str                     # sağlayıcıya özgü adres parçası
-    name: str | None = None
-    benchmark: str | None = None
-    # Elle girilebilir ama SAĞLAYICI ÜZERİNE YAZAR: stopaj kararı resmî
-    # fon adındaki "(Hisse Senedi Yoğun Fon)" ibaresine bağlıdır, elle
-    # girilen bir bayrağa değil.
-    is_equity_heavy: bool | None = None
-
-
-@dataclass(frozen=True)
-class ResolvedFund:
-    """Fon kodundan çözülen kayıt defteri satırı."""
-
-    code: str
-    provider: str
-    ref: str
-    name: str | None = None
-
-
-@dataclass(frozen=True)
-class FundSeries:
-    """Bir sağlayıcının bir fon için döndürdüğü sonuç."""
-
-    code: str
-    name: str | None
-    is_equity_heavy: bool | None
-    points: list[tuple[date, float]]
-
-
-class FundPriceProvider(ABC):
-    key: str
-    label: str
-    # Seri birim pay fiyatı mı, yoksa endeks mi (bkz. modül docstring'i).
-    price_is_unit_value: bool = True
-
-    @abstractmethod
-    def fetch(self, fund: FundSpec) -> str:
-        """Ham yanıtı döndürür. HTTP çağrıları collectors/http üzerinden."""
-
-    @abstractmethod
-    def parse(self, fund: FundSpec, raw: str) -> FundSeries:
-        """Ham yanıtı tarih->fiyat serisine çevirir."""
-
-    def resolve(self, code: str) -> ResolvedFund | None:
-        """Fon KODUNDAN adres parçasını bul — kullanıcı URL girmesin.
-
-        Kullanıcı isteği (2026-09-04): "sadece fon koduyla, url olmadan".
-        Panelden fon eklemek, sağlayıcının sitesine gidip fonun sayfa kısa
-        adını elle bulup kopyalamayı gerektiriyordu; bu hem zahmetli hem de
-        yanlış yapıştırmaya çok açık — nitekim öyle de oldu (bkz.
-        GarantiPortfoyProvider.fetch'teki kod doğrulaması).
-
-        Bulamazsa None döner; çağıran diğer sağlayıcıları dener.
-        """
-        return None
-
-
-# ------------------------------------------------------------ Ak Portföy --
-
-
-class AkPortfoyProvider(FundPriceProvider):
-    """Fiyat serisi sayfaya gömülü: `var fundVals = {...}`.
-
-    API çağrısı, token veya CSRF yok; sitede robots.txt de yok (HTTP 404).
-    2018'den bugüne ~2160 günlük kapanış fiyatı — panelin ihtiyacından
-    çok fazlası.
-    """
-
-    key = "akportfoy"
-    label = "Ak Portföy"
-    price_is_unit_value = True
-
-    URL_TEMPLATE = "https://www.akportfoy.com.tr/tr/fon/{ref}"
-
-    _FUNDVALS_RE = re.compile(r"var\s+fundVals\s*=\s*(\{.*?\});", re.DOTALL)
-    _TITLE_RE = re.compile(r"<title>(.*?)</title>", re.DOTALL)
-
-    def fetch(self, fund: FundSpec) -> str:
-        resp = http.get(
-            self.URL_TEMPLATE.format(ref=fund.ref),
-            timeout=25,
-            headers=HEADERS,
-            follow_redirects=True,
-        )
-        resp.raise_for_status()
-        return resp.text
-
-    def resolve(self, code: str) -> ResolvedFund | None:
-        """Ak Portföy'de adres parçası fon kodunun kendisi: /tr/fon/AK3.
-
-        Yine de sayfa GERÇEKTEN açılıyor mu diye bakılır; yoksa var olmayan
-        bir kod kayıt defterine yazılır ve her koşuda sessizce düşerdi.
-        """
-        code = code.strip().upper()
-        try:
-            resp = http.get(
-                self.URL_TEMPLATE.format(ref=code),
-                timeout=25, headers=HEADERS, follow_redirects=True,
-            )
-        except Exception:  # noqa: BLE001 - çözümleme başarısızlığı hata değil
-            return None
-        if resp.status_code != 200 or self._FUNDVALS_RE.search(resp.text) is None:
-            return None
-        name = None
-        m = self._TITLE_RE.search(resp.text)
-        if m:
-            name = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", m.group(1))).split())
-        return ResolvedFund(code=code, provider=self.key, ref=code, name=name or None)
-
-    def parse(self, fund: FundSpec, raw: str) -> FundSeries:
-        match = self._FUNDVALS_RE.search(raw)
-        if match is None:
-            raise ParseError(
-                f"{fund.code}: 'var fundVals' bulunamadı — sayfa yapısı değişmiş olabilir"
-            )
-        try:
-            fund_vals = json.loads(match.group(1))
-        except json.JSONDecodeError as exc:
-            raise ParseError(f"{fund.code}: fundVals JSON'u ayrıştırılamadı ({exc})") from exc
-
-        name = None
-        is_equity_heavy = None
-        title_match = self._TITLE_RE.search(raw)
-        if title_match:
-            name = html.unescape(title_match.group(1)).replace("| Ak Portföy", "").strip()
-            # Başlık "AK3 - Ak Portföy ..." biçiminde; kodu ada tekrar gömme.
-            name = re.sub(rf"^{re.escape(fund.code)}\s*[-–]\s*", "", name).strip()
-            is_equity_heavy = EQUITY_HEAVY_MARKER in name.casefold()
-
-        series = fund_vals.get(fund.ref) or fund_vals.get(fund.code)
-        if not series:
-            raise ParseError(f"{fund.code}: fundVals içinde bu koda ait seri yok")
-
-        points: list[tuple[date, float]] = []
-        for point in series:
-            try:
-                points.append(
-                    (epoch_ms_to_istanbul_date(point["Date"]), float(point["Close"]))
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ParseError(f"{fund.code}: fiyat noktası ayrıştırılamadı ({exc})") from exc
-        return FundSeries(fund.code, name, is_equity_heavy, points)
-
-
-# ------------------------------------------------------ Garanti Portföy --
 
 
 class GarantiPortfoyProvider(FundPriceProvider):
@@ -263,7 +74,8 @@ class GarantiPortfoyProvider(FundPriceProvider):
     _NAME_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.DOTALL)
     _TITLE_RE = re.compile(r"<title>(.*?)</title>", re.DOTALL)
 
-    def fetch(self, fund: FundSpec) -> str:
+    def fetch(self, fund: FundSpec, *, known_dates: frozenset[date] = frozenset()) -> str:
+        # `known_dates` yok sayılır: uç nokta tüm aralığı tek istekte veriyor.
         page_url = self.PAGE_TEMPLATE.format(ref=fund.ref.strip("/"))
         page = http.get(page_url, timeout=30, headers=HEADERS, follow_redirects=True)
         page.raise_for_status()
@@ -421,8 +233,3 @@ def _unwrap(payload):
     if isinstance(payload, dict) and "data" in payload:
         return payload["data"]
     return payload
-
-
-PROVIDERS: dict[str, FundPriceProvider] = {
-    p.key: p for p in (AkPortfoyProvider(), GarantiPortfoyProvider())
-}

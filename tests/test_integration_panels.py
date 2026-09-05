@@ -590,3 +590,34 @@ def test_business_date_diverges_from_utc_after_midnight_in_istanbul():
     assert instant.date() == date(2026, 8, 25)  # banka günü bugünü
     # İkisi GERÇEKTEN farklı; test tautoloji değil.
     assert instant.astimezone(_tz.utc).date() != instant.date()
+
+
+# ------------------------------------------------- seyrek seri uyarısı ----
+
+def test_daily_coverage_flags_a_sparse_series_but_not_a_daily_one():
+    """Panel uyarısı SAĞLAYICI ADINA değil VERİYE bakmalı.
+
+    Yapı Kredi Portföy uç noktası uzak geçmişi aylık veriyor; grafiğe
+    bakan biri "veri eksik mi?" diye düşünmesin diye panel sebebi yazıyor.
+    Kontrol veriye bakınca, yeni bir sağlayıcı eklendiğinde uyarı
+    kendiliğinden doğru çalışır.
+
+    REGRESYON (tarayıcıda yakalandı, 2026-09-05): ölçüm SON 90 GÜNE
+    bakıyordu ve uyarı hiç çıkmıyordu — çünkü serinin son iki ayı zaten
+    günlük; seyrek olan uzak geçmişi. Ölçüm serinin tamamına bakmalı.
+    """
+    from datetime import date, timedelta
+
+    from app.panels.fund import _daily_coverage
+
+    son = date(2026, 9, 4)
+    # Kesintisiz günlük seri (hafta sonları kapalı) ~0,71'i geçemez.
+    gunluk = [(son - timedelta(days=k), 1.0 + k) for k in range(0, 400) if (son - timedelta(days=k)).weekday() < 5]
+    # Yapı Kredi'nin gerçek deseni: son 56 gün günlük, öncesi aylık.
+    ykp = [(son - timedelta(days=k), 1.0 + k) for k in range(0, 56)]
+    ykp += [(son - timedelta(days=30 * k), 1.0 + k) for k in range(2, 26)]
+
+    assert _daily_coverage(gunluk) > 0.5
+    assert _daily_coverage(ykp) < 0.5, "seyrek uzak geçmiş uyarıyı tetiklemeli"
+    assert _daily_coverage([]) is None
+    assert _daily_coverage([(son, 1.0)]) is None

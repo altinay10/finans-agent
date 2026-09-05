@@ -5,6 +5,7 @@ modülden çözülmüş oranları alıp core/ fonksiyonlarına parametre olarak 
 """
 from __future__ import annotations
 
+import os
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -222,3 +223,52 @@ def source_caveat(dataset: str, institution: str) -> str | None:
     """
     row = endpoint_for(dataset, institution)
     return row.get("caveat") if row else None
+
+
+# ------------------------------------------------- fon kayıt defteri yolu --
+#
+# BURADA OLMASININ SEBEBİ: aynı yolu iki yer çözüyordu ve FARKLI çözüyordu.
+# `collectors/fund_prices.py` veri dizinindeki (`data/funds.yaml`) kopyayı
+# tercih ediyordu — Docker'da kalıcı olan tek yer orası. `store/db.py` ise
+# doğrudan `config/funds.yaml`'ı okuyordu. Sonuç: panelden eklenen bir fon
+# veri dizinine yazılıyor, ama `seed_reference_data` onu depo içindeki
+# BAYAT dosyada bulamayıp "kayıt defterinde yok" diyerek katalogdan
+# SİLİYORDU (fiyatı henüz gelmemişse). Tek çözümleyici, tek davranış.
+
+FUNDS_YAML = REPO_ROOT / "config" / "funds.yaml"
+
+
+def data_funds_yaml() -> Path:
+    """Veri dizinindeki (Docker volume) kayıt defteri."""
+    return Path(os.environ.get("DATA_DIR") or (REPO_ROOT / "data")) / "funds.yaml"
+
+
+def funds_yaml_path() -> Path:
+    """Kayıt defterinin OKUNACAĞI yer.
+
+    Öncelik: FUNDS_YAML_PATH ortam değişkeni > veri dizini > depo içi.
+    """
+    acik = os.environ.get("FUNDS_YAML_PATH")
+    if acik:
+        return Path(acik)
+    if data_funds_yaml().exists():
+        return data_funds_yaml()
+    return FUNDS_YAML
+
+
+def writable_funds_yaml() -> Path:
+    """Yeni fonun YAZILACAĞI yer.
+
+    Veri dizini varsa oraya yazılır — konteynerde kalıcı olan tek yer orası.
+    İlk yazımda depo içindeki kayıt defteri oraya KOPYALANIR; yoksa dosya
+    yalnızca yeni eklenen fonu içerir ve mevcut fonlar bir anda kaybolurdu.
+    """
+    acik = os.environ.get("FUNDS_YAML_PATH")
+    if acik:
+        return Path(acik)
+    veri = data_funds_yaml()
+    if not veri.parent.is_dir():
+        return FUNDS_YAML
+    if not veri.exists() and FUNDS_YAML.exists():
+        veri.write_text(FUNDS_YAML.read_text(encoding="utf-8"), encoding="utf-8")
+    return veri

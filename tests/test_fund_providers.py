@@ -286,7 +286,6 @@ def test_seeding_survives_a_fund_added_without_a_name(db, tmp_path: Path, monkey
     eklemek, bir sonraki başlatmada tüm paneli karartıyordu. Canlı akış
     testinde yakalandı (2026-08-25).
     """
-    import store.db as db_module
     from store.db import SessionLocal, seed_reference_data
     from store.models import Fund
 
@@ -295,7 +294,10 @@ def test_seeding_survives_a_fund_added_without_a_name(db, tmp_path: Path, monkey
         "funds:\n  - {code: TGT, provider: garantiportfoy, ref: kisa-vadeli-fon}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(db_module, "FUNDS_YAML", path)
+    # Kayıt defteri yolu artık TEK yerden çözülüyor (config.loader.funds_yaml_path);
+    # `store.db.FUNDS_YAML` sabitini yamamak, toplayıcının okuduğu dosyayı
+    # DEĞİŞTİRMİYORDU — hatanın kendisi buydu (bkz. aşağıdaki regresyon testi).
+    monkeypatch.setenv("FUNDS_YAML_PATH", str(path))
 
     seed_reference_data()      # patlamamalı
 
@@ -396,13 +398,14 @@ def test_registry_write_goes_to_the_data_dir_and_keeps_existing_funds(tmp_path, 
     dosya yalnızca yeni fonu içerir ve 11 fon bir anda kaybolur.
     """
     from collectors import fund_prices
+    from config.loader import writable_funds_yaml
 
     veri = tmp_path / "data"
     veri.mkdir()
     monkeypatch.setenv("DATA_DIR", str(veri))
     monkeypatch.delenv("FUNDS_YAML_PATH", raising=False)
 
-    hedef = fund_prices._writable_funds_yaml()
+    hedef = writable_funds_yaml()
     assert hedef == veri / "funds.yaml"
     # Depodaki fonlar taşınmış olmalı.
     tasinan = {s.code for s in fund_prices.load_fund_registry(hedef)}
@@ -411,3 +414,116 @@ def test_registry_write_goes_to_the_data_dir_and_keeps_existing_funds(tmp_path, 
     fund_prices.add_fund_to_registry(code="GPU", provider="garantiportfoy", ref="smart-x")
     sonra = {s.code for s in fund_prices.load_fund_registry(hedef)}
     assert "GPU" in sonra and {"AK3", "GTL", "GTA"} <= sonra
+
+
+# ------------------------------------------- seyrek seri ve sanity eşiği --
+
+def test_sanity_threshold_grows_with_the_gap_between_points():
+    """SEYREK SERİ REGRESYON KORUMASI.
+
+    Deniz Portföy ve Yapı Kredi Portföy serilerinin uzak geçmişi bilerek
+    seyrektir (haftalık/aylık noktalar). Eşik sabit %30 kalsaydı, iki aylık
+    nokta arasındaki tamamen normal bir hisse fonu yükselişi
+    SanityCheckError fırlatır ve o koşuda HİÇBİR FON yazılmazdı — sağlam
+    bir koruma, veriyi topluca engelleyen bir arızaya dönerdi.
+    """
+    from collectors.fund_prices import SANITY_MAX_DAILY_MOVE, max_move_for_gap
+
+    assert max_move_for_gap(1) == SANITY_MAX_DAILY_MOVE   # eski davranış korunuyor
+    assert max_move_for_gap(7) > max_move_for_gap(1)
+    assert max_move_for_gap(30) > max_move_for_gap(7)
+    # Tavan var: %300'ü aşan sıçrama hangi aralıkta olursa olsun şüpheli.
+    assert max_move_for_gap(10_000) == max_move_for_gap(3650)
+
+
+def test_daily_scale_error_is_still_caught(db):
+    """Gün gün gelen seride kuruş/lira karışması hâlâ yazmayı engellemeli."""
+    from collectors.base import SanityCheckError
+    from collectors.fund_prices import FundPriceCollector, FundPriceRecord
+
+    kayitlar = [
+        FundPriceRecord(fund_code="AK3", price_date=date(2026, 9, 3), price=10.0),
+        FundPriceRecord(fund_code="AK3", price_date=date(2026, 9, 4), price=1000.0),
+    ]
+    with pytest.raises(SanityCheckError):
+        FundPriceCollector(specs=[]).sanity_check(kayitlar)
+
+
+def test_a_month_long_gap_does_not_trip_the_check(db):
+    """Aylık noktalar arasındaki %40'lık hareket normaldir, yazma engellenmemeli."""
+    from collectors.fund_prices import FundPriceCollector, FundPriceRecord
+
+    kayitlar = [
+        FundPriceRecord(fund_code="AK3", price_date=date(2026, 8, 4), price=10.0),
+        FundPriceRecord(fund_code="AK3", price_date=date(2026, 9, 4), price=14.0),
+    ]
+    FundPriceCollector(specs=[]).sanity_check(kayitlar)   # patlamamalı
+
+
+# ------------------------------------------------- kayıt defteri TEK yol --
+
+def test_startup_seed_reads_the_same_registry_the_panel_writes(db, tmp_path, monkeypatch):
+    """KAYBOLAN FON REGRESYONU — İKİNCİ YARISI (2026-09-05).
+
+    Kayıt defterinin yolunu İKİ yer çözüyordu ve FARKLI çözüyordu:
+    `collectors/fund_prices.py` veri dizinini (Docker'da kalıcı olan tek
+    yer) tercih ediyordu, `store/db.py` ise doğrudan `config/funds.yaml`ı
+    okuyordu. Sonuç: panelden eklenen fon veri dizinine yazılıyor, ama
+    `seed_reference_data` onu depo içindeki BAYAT dosyada bulamayıp
+    "kayıt defterinde yok" diyerek katalogdan SİLİYORDU.
+    """
+    from store.db import SessionLocal, seed_reference_data
+    from store.models import Fund
+
+    defter = tmp_path / "funds.yaml"
+    defter.write_text(
+        "funds:\n  - {code: YUB, provider: ykportfoy, ref: /x/yub, name: YK Fonu}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FUNDS_YAML_PATH", str(defter))
+
+    assert {s.code for s in load_fund_registry()} == {"YUB"}
+    seed_reference_data()
+    with SessionLocal() as session:
+        assert session.get(Fund, "YUB") is not None, (
+            "açılış tohumlaması, toplayıcının okuduğu kayıt defterini okumalı"
+        )
+
+
+# ------------------------------------------------- sağlayıcı kataloğu ----
+
+def test_provider_catalog_adds_every_fund_once(tmp_path, monkeypatch):
+    """Kullanıcının şikâyeti "fon sayısı çok az"dı; katalog ekleme bunun cevabı."""
+    from collectors import fund_prices
+    from collectors.fund_providers import ResolvedFund
+
+    defter = tmp_path / "funds.yaml"
+    defter.write_text(
+        "funds:\n  - {code: YUB, provider: ykportfoy, ref: /x/yub}\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("FUNDS_YAML_PATH", str(defter))
+
+    class _Sahte:
+        key = "ykportfoy"
+        def catalog(self):
+            return [
+                ResolvedFund("YUB", "ykportfoy", "/x/yub", "zaten var"),
+                ResolvedFund("YPT", "ykportfoy", "/x/ypt", "yeni"),
+                ResolvedFund("KMN", "ykportfoy", "/x/kmn", "yeni"),
+            ]
+
+    monkeypatch.setattr(fund_prices, "build_providers", lambda: {"ykportfoy": _Sahte()})
+
+    eklenen = fund_prices.add_provider_catalog("ykportfoy")
+    assert {k.code for k in eklenen} == {"YPT", "KMN"}, "zaten kayıtlı olan atlanmalı"
+    assert {s.code for s in load_fund_registry()} == {"YUB", "YPT", "KMN"}
+
+    # Yeniden çalıştırılabilir olmalı — ikinci çağrı hiçbir şey eklememeli.
+    assert fund_prices.add_provider_catalog("ykportfoy") == []
+
+
+def test_unknown_provider_catalog_raises():
+    from collectors.fund_prices import add_provider_catalog
+
+    with pytest.raises(ValueError):
+        add_provider_catalog("yokportfoy")

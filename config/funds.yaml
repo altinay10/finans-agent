@@ -21,6 +21,7 @@
 #   ref       sağlayıcıya özgü adres parçası:
 #               akportfoy      -> fon kodu (URL: /tr/fon/<ref>)
 #               garantiportfoy -> sayfa kısa adı (URL: /<ref>)
+#               ykportfoy      -> sitemap'ten gelen tam yol (/urun-ve-.../yub)
 #   name      insan okuyabilir ad. Sağlayıcı sayfadan gerçek adı okur ve
 #             ÜZERİNE YAZAR; buradaki değer yalnızca ilk görünüm içindir.
 #   benchmark bilgi amaçlı; hesaba girmez.
@@ -93,3 +94,22 @@ funds:
   ref: kisa-vadeli-borclanma-araclari-fonu
   name: Garanti BBVA Portföy Kısa Vadeli Borçlanma Araçları Fonu
   benchmark: TLREF
+
+# --- Yapı Kredi Portföy (2026-09-05) ---------------------------------------
+# `ref` sitemap'ten gelen TAM YOL; sayfadaki sayısal kimlik oradan okunuyor.
+# Panelden kodla eklenirse yol otomatik çözülür.
+- code: YUB
+  provider: ykportfoy
+  ref: /urun-ve-hizmetlerimiz/yatirim-fonlari/hisse-senedi-stratejisi/yub
+  name: Yapı Kredi Portföy Karaköy Hisse Senedi Serbest Fon
+  benchmark: BIST100
+- code: YPT
+  provider: ykportfoy
+  ref: /urun-ve-hizmetlerimiz/yatirim-fonlari/para-piyasasi-stratejisi/ypt
+  name: Yapı Kredi Portföy Para Piyasası Fonu
+  benchmark: TLREF
+- code: KMN
+  provider: ykportfoy
+  ref: /urun-ve-hizmetlerimiz/yatirim-fonlari/kiymetli-maden-ve-emtia-stratejisi/kmn
+  name: Yapı Kredi Portföy Kıymetli Madenler Fonu
+  benchmark: XAU

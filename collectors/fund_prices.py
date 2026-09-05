@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from datetime import date
 from pathlib import Path
@@ -25,67 +24,46 @@ from sqlalchemy import select
 from collectors import http
 from collectors.base import Collector, ParseError, SanityCheckError
 from collectors.fund_providers import (
-    PROVIDERS, REQUEST_DELAY_SECONDS, FundSpec, ResolvedFund,
+    PROVIDERS, REQUEST_DELAY_SECONDS, FundSpec, ResolvedFund, build_providers,
 )
+from config.loader import funds_yaml_path, writable_funds_yaml
 from store.clock import istanbul_today, utc_now
 from store.db import REPO_ROOT, SessionLocal
 from store.models import Fund, FundPrice
 
 logger = logging.getLogger(__name__)
 
-def _funds_yaml_path() -> Path:
-    """Kayıt defterinin yeri — Docker'da KALICI olan yer.
-
-    KAYBOLAN FON HATASI (2026-09-04): panelden eklenen fon
-    `<repo>/config/funds.yaml` dosyasına yazılıyordu. Konteynerde bu dosya
-    İMAJ KATMANINDA duruyor; volume yalnızca /app/data'ya bağlı. Yani
-    kullanıcının panelden eklediği her fon, bir sonraki `docker compose
-    up -d`de sessizce yok oluyordu — üstelik `seed_reference_data` kayıt
-    defterinde bulamadığı fonu (fiyatı yoksa) veritabanından da siliyor.
-
-    Çözüm: veri dizininde bir kayıt defteri varsa O kullanılır. Yoksa depo
-    içindeki dosyaya düşülür — testler ve compose'suz çalıştırma için.
-    FUNDS_YAML_PATH ile de doğrudan verilebilir.
-    """
-    acik = os.environ.get("FUNDS_YAML_PATH")
-    if acik:
-        return Path(acik)
-    if _data_funds_yaml().exists():
-        return _data_funds_yaml()
-    return REPO_ROOT / "config" / "funds.yaml"
-
-
-def _data_funds_yaml() -> Path:
-    """Veri dizinindeki (volume) kayıt defteri."""
-    return Path(os.environ.get("DATA_DIR") or (REPO_ROOT / "data")) / "funds.yaml"
-
-
-def _writable_funds_yaml() -> Path:
-    """Yeni fonun YAZILACAĞI yer.
-
-    Veri dizini varsa oraya yazılır — konteynerde kalıcı olan tek yer orası.
-    İlk yazımda depo içindeki kayıt defteri oraya KOPYALANIR; yoksa dosya
-    yalnızca yeni eklenen fonu içerir ve mevcut 11 fon bir anda kaybolurdu.
-    """
-    acik = os.environ.get("FUNDS_YAML_PATH")
-    if acik:
-        return Path(acik)
-    veri = _data_funds_yaml()
-    if not veri.parent.is_dir():
-        return REPO_ROOT / "config" / "funds.yaml"
-    if not veri.exists():
-        kaynak = REPO_ROOT / "config" / "funds.yaml"
-        if kaynak.exists():
-            veri.write_text(kaynak.read_text(encoding="utf-8"), encoding="utf-8")
-    return veri
-
-
+# Geriye dönük uyum: bu isim başka modüllerde/testlerde kullanılıyor olabilir.
 FUNDS_YAML = REPO_ROOT / "config" / "funds.yaml"
 
 # Tek günde bundan fazla hareket, fiyat serisinde bir ölçek hatası
 # (kuruş/lira karışması, bölünme) işaretidir. Fon fiyatları böyle
 # sıçramaz; sıçrıyorsa veri yazılmaz.
 SANITY_MAX_DAILY_MOVE = 0.30
+
+# ARDIŞIK NOKTALAR ARASI eşiğin gün sayısıyla nasıl büyüyeceği.
+#
+# NEDEN GEREKLİ: Deniz Portföy ve Yapı Kredi Portföy serilerinin uzak
+# geçmişi bilerek SEYREKTİR (haftalık/aylık noktalar; bkz. ilgili
+# sağlayıcı modüllerinin ızgara açıklamaları). Eşik sabit %30 kalsaydı,
+# iki aylık noktası arasındaki tamamen normal bir %35'lik hisse fonu
+# yükselişi SanityCheckError fırlatır ve o koşuda HİÇBİR FON yazılmazdı —
+# yani sağlam bir veri korumasını, veriyi topluca engelleyen bir arızaya
+# çevirirdik.
+#
+# Eşik gün sayısının KAREKÖKÜYLE büyür (rassal yürüyüş: oynaklık ~ √t).
+# Doğrusal büyütmek koruma bırakmazdı, sabit bırakmak yanlış alarm üretirdi.
+SANITY_MAX_TOTAL_MOVE = 3.00   # üst sınır: %300'ü aşan sıçrama her hâlükârda şüpheli
+
+
+def max_move_for_gap(gap_days: int) -> float:
+    """`gap_days` gün arayla iki fiyat arasında kabul edilebilir en büyük oran.
+
+    1 gün -> %30 (eski davranış aynen korunur), 7 gün -> ~%79,
+    30 gün -> ~%164, 90+ gün -> tavan olan %300.
+    """
+    gap = max(1, gap_days)
+    return min(SANITY_MAX_DAILY_MOVE * (gap ** 0.5), SANITY_MAX_TOTAL_MOVE)
 
 
 class FundPriceRecord(BaseModel):
@@ -102,7 +80,7 @@ def load_fund_registry(path: Path | None = None) -> list[FundSpec]:
     Bilinmeyen sağlayıcılı satırlar ATLANIR ve loglanır: panelden elle
     eklenen bir satırdaki yazım hatası tüm toplamayı düşürmemeli.
     """
-    path = path or _funds_yaml_path()
+    path = path or funds_yaml_path()
     if not path.exists():
         return []
     with open(path, encoding="utf-8") as f:
@@ -142,7 +120,10 @@ def resolve_fund(code: str) -> ResolvedFund | None:
     code = (code or "").strip().upper()
     if not code:
         return None
-    for provider in PROVIDERS.values():
+    # Taze kopya: sağlayıcıların dizin önbelleği örnek ömrü boyunca yaşıyor.
+    # Modül düzeyindeki PROVIDERS kullanılsaydı, panel açıkken bir kez
+    # okunan fon dizini süreç kapanana kadar bayat kalırdı.
+    for provider in build_providers().values():
         try:
             bulunan = provider.resolve(code)
         except Exception as exc:  # noqa: BLE001 - bir sağlayıcı diğerini engellemesin
@@ -175,6 +156,33 @@ def add_fund_by_code(code: str, *, benchmark: str | None = None) -> ResolvedFund
     return bulunan
 
 
+def add_provider_catalog(provider_key: str) -> list[ResolvedFund]:
+    """Bir sağlayıcının TÜM fonlarını kayıt defterine ekle.
+
+    NEDEN VAR: kullanıcının şikâyeti "fon sayısı çok az"dı ve fonları
+    tek tek koduyla eklemek, 76 fonluk bir katalog için 76 ayrı işlem
+    demekti. Katalog sağlayıcının kendi dizininden tek istekte okunuyor,
+    yani ekleme ucuz; fiyat toplama maliyeti ise gece koşusuna dağılıyor.
+
+    Zaten kayıtlı olan kodlar sessizce atlanır — çağrı yeniden
+    çalıştırılabilir olsun diye. Dönen liste GERÇEKTEN EKLENENLERDİR.
+    """
+    provider = build_providers().get(provider_key)
+    if provider is None:
+        raise ValueError(f"{provider_key}: böyle bir sağlayıcı yok")
+    mevcut = {spec.code.upper() for spec in load_fund_registry()}
+    eklenen: list[ResolvedFund] = []
+    for kayit in provider.catalog():
+        if kayit.code.upper() in mevcut:
+            continue
+        add_fund_to_registry(
+            code=kayit.code, provider=kayit.provider, ref=kayit.ref, name=kayit.name,
+        )
+        mevcut.add(kayit.code.upper())
+        eklenen.append(kayit)
+    return eklenen
+
+
 def collect_one(code: str):
     """TEK fonun fiyat serisini hemen çek.
 
@@ -202,7 +210,7 @@ def add_fund_to_registry(
     `seed_reference_data` bir sonraki açılışta onu "kayıt defterinde yok"
     diye silerdi.
     """
-    path = path or _writable_funds_yaml()
+    path = path or writable_funds_yaml()
     body = {}
     if path.exists():
         with open(path, encoding="utf-8") as f:
@@ -243,13 +251,43 @@ class FundPriceCollector(Collector):
     def __init__(self, specs: list[FundSpec] | None = None) -> None:
         super().__init__()
         self.specs = specs if specs is not None else load_fund_registry()
+        # KOŞUYA ÖZEL sağlayıcı kopyaları. Modül düzeyindeki paylaşılan
+        # PROVIDERS sözlüğü kullanılamaz: sağlayıcılar örnek düzeyinde
+        # önbellek tutuyor (Yapı Kredi Portföy fon dizinini sitemap'ten bir
+        # kez okuyup saklıyor). Paylaşılan örnekte bu dizin süreç ömrü
+        # boyunca bayat kalır, yeni açılan bir fon hiç bulunamazdı.
+        self.providers = build_providers()
+
+    def _known_dates(self) -> dict[str, frozenset[date]]:
+        """SAĞLAYICI başına, veritabanında zaten olan fiyat tarihleri.
+
+        Fon başına değil SAĞLAYICI başına: Deniz Portföy'de tek bir istek
+        97 fonun o günkü fiyatını birden getiriyor, yani "bu gün elimizde
+        var mı" sorusunun cevabı fon değil sağlayıcı ölçeğinde anlamlı.
+        Bu küme olmadan seyrek seri toplayan sağlayıcılar her gece aynı
+        yüzlerce isteği baştan atardı.
+        """
+        by_provider: dict[str, set[str]] = {}
+        for spec in self.specs:
+            by_provider.setdefault(spec.provider, set()).add(spec.code)
+        sonuc: dict[str, frozenset[date]] = {}
+        with SessionLocal() as session:
+            for provider_key, codes in by_provider.items():
+                tarihler = session.execute(
+                    select(FundPrice.price_date)
+                    .where(FundPrice.fund_code.in_(codes))
+                    .distinct()
+                ).scalars().all()
+                sonuc[provider_key] = frozenset(tarihler)
+        return sonuc
 
     def fetch(self) -> bytes:
         payloads: dict[str, dict] = {}
+        known = self._known_dates()
         for index, spec in enumerate(self.specs):
             if index:
                 time.sleep(REQUEST_DELAY_SECONDS)
-            provider = PROVIDERS[spec.provider]
+            provider = self.providers[spec.provider]
             started = time.monotonic()
             with http.source(spec.code):
                 try:
@@ -257,7 +295,9 @@ class FundPriceCollector(Collector):
                         "ok": True,
                         "provider": spec.provider,
                         "ref": spec.ref,
-                        "body": provider.fetch(spec),
+                        "body": provider.fetch(
+                            spec, known_dates=known.get(spec.provider, frozenset())
+                        ),
                     }
                     self.record_source(
                         spec.code, phase="fetch", status="ok",
@@ -311,7 +351,7 @@ class FundPriceCollector(Collector):
             spec = by_code.get(code) or FundSpec(
                 code=code, provider=entry.get("provider", ""), ref=entry.get("ref", code)
             )
-            provider = PROVIDERS.get(spec.provider)
+            provider = self.providers.get(spec.provider)
             if provider is None:
                 self.record_source(
                     code, phase="parse", status="failed",
@@ -364,9 +404,12 @@ class FundPriceCollector(Collector):
                 raise SanityCheckError(f"{code}: aynı tarih için birden fazla fiyat var")
             for prev, cur in zip(rows, rows[1:]):
                 move = abs(cur.price - prev.price) / prev.price
-                if move > SANITY_MAX_DAILY_MOVE:
+                gap = (cur.price_date - prev.price_date).days
+                limit = max_move_for_gap(gap)
+                if move > limit:
                     raise SanityCheckError(
-                        f"{code}: {prev.price_date}->{cur.price_date} arası %{move*100:.1f} hareket"
+                        f"{code}: {prev.price_date}->{cur.price_date} arası "
+                        f"({gap} gün) %{move*100:.1f} hareket — sınır %{limit*100:.1f}"
                     )
 
     def persist(self, records: list[FundPriceRecord], run_id: int) -> None:

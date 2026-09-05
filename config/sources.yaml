@@ -879,6 +879,74 @@ fund_endpoints:
       "1.000 TL yatırılsaydı" endeksidir; panel bunu açıkça yazar
       (collectors/fund_providers.py::GarantiPortfoyProvider).
 
+  denizportfoy:
+    url: "https://www.denizportfoy.com/Fon/FonGetiriList"
+    type: json_query
+    auth: none
+    status: blocked
+    last_verified: 2026-09-05
+    blocked_reason: >
+      ERİŞİM ENGELİ YOK — VERİ GÜVENİLİR DEĞİL. Uç nokta açık ve
+      robots.txt de izin veriyor (`/api/` yasak, bu uç `/Fon/` altında);
+      sorun verinin kendisinde.
+
+      `?start=D&end=D` çağrısı "o günün birim pay fiyatı"nı veriyor
+      GÖRÜNÜYOR: yanıt `sıra_ilkFiyat_sonFiyat_KOD_getiri_10000TL_birim`
+      biçiminde ve start==end iken ilk=son, getiri 0 oluyor. Ama
+      değerler o tarihe AİT DEĞİL.
+
+      Kanıt (2026-09-05, hepsi ölçüldü):
+        * 04.09.2026 tek gün sorgusu ile sitenin KENDİ fon tablosundaki
+          güncel fiyat karşılaştırıldı: 90 fonun yalnızca 23'ü %2 içinde
+          tutuyor. DLZ %180, DIK %64, DVT %27 sapıyor.
+        * DLY bir PARA PİYASASI fonu, yani fiyatı düşemez. Uç nokta
+          07.07 -> 5.792449, 06.08 -> 5.618543, 01.09 -> 4.820227 diyor
+          (düşüyor), sonra 01-04 Eylül arası günde %3,2 "yükseliyor".
+          İkisi de bu fon türü için imkânsız.
+        * 10.07.2026 - 31.08.2026 arası neredeyse tüm günler `null` ya da
+          `NaN` dönüyor; 06.08 tek başına dolu. Yani tarih ızgarası
+          kurulamıyor.
+
+      Yanıtta TARİH ALANI YOK; bir değerin hangi güne ait olduğu
+      doğrulanamıyor. Bu veriyi seriye yazmak, fiyatları YANLIŞ TARİHE
+      kaydetmek olurdu — hiçbir yerde patlamayan, panelde sessizce yanlış
+      getiri gösteren türden bir hata. Bilerek kullanılmıyor.
+
+      İLERİDE AÇILABİLİR: `/Fon/FonGetirileri` sayfasındaki tablo 93 fonun
+      GÜNCEL fiyatını doğru veriyor (tek istek, ad + "(Hisse Senedi Yoğun
+      Fon)" ibaresi dahil). Günlük anlık görüntü olarak toplanırsa ileriye
+      doğru doğru bir seri kurar — ama geçmişi olmaz, yani İş Portföy ile
+      aynı gerekçeyle bugün panele fayda etmez.
+
+      DenizBank'ın KENDİ sitesinde fiyat verisi hiç yok: 2026-09-05'te
+      `/kendim-icin/ozel-bankacilik/.../fon-fiyatlari` tarayıcıda açıldı,
+      hiçbir veri isteği atmıyor; sayfa pazarlama içeriği.
+
+  ykportfoy:
+    url: "https://www.yapikrediportfoy.com.tr/getFundDetail/{id}"
+    type: json_post
+    auth: none
+    status: active
+    last_verified: 2026-09-05
+    note: >
+      113 fon (kilitli özel fonlar ve tasfiye edilenler çıkınca katalog 76).
+      Üç adım: sitemap.xml -> fon sayfası -> POST /getFundDetail/<id>.
+      Sayısal kimlik yalnızca sayfada (`data-ajax-fund-detail`), koddan
+      türetilemiyor.
+      DİKKAT — GET ÇALIŞMAZ, 404 HTML döner; yöntem POST olmak zorunda.
+      Boş gövdeyle de 200 döner ama seri BOŞ gelir, yani "200 aldım demek
+      ki çalışıyor" kontrolü burada yanıltıcıdır.
+      DİKKAT — 30 GÜNDEN UZUN ARALIK SERİYİ AYLIĞA SEYRELTİR. Ölçüldü
+      (2026-09-05, YUB): 28 gün -> 20 nokta, 31 gün -> 2 nokta, 90 gün ->
+      4 nokta, 1095 gün -> 37 nokta. Bu yüzden toplayıcı uzun aralıktan
+      aylık omurgayı, panelin senaryolarının denk geldiği yerlerden
+      28 günlük pencerelerle günlük çözünürlüğü alıyor.
+      DİKKAT — tarihler epoch değil, TÜRKÇE AY ADIYLA metin ("06 Eylül
+      2024"); locale'e güvenmek sunucuda sessizce boş seri üretirdi.
+      Yapı Kredi'nin KENDİ sitesi (`/yatirimci-kosesi/fon-bilgileri/`)
+      42 fonu kod + ad + GÜNCEL fiyat olarak veriyor, geçmiş seri yok ve
+      listesi zaten YK Portföy'ün alt kümesi — bu yüzden kullanılmıyor.
+
   isportfoy:
     url: "https://www.isportfoy.com.tr/tr/yatirim-fonlari"
     type: html
