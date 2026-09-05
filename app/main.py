@@ -27,7 +27,27 @@ st.caption(
 status.render()
 st.divider()
 
-principal = st.number_input("Anapara (TL)", min_value=0, value=1_000_000, step=50_000)
+# Anapara, paneldeki tek para giriş alanı ve bütün sekmeler onu okuyor.
+# Varsayılan 14 puntoda yedi haneli tutar zor seçiliyordu; kutuyu büyütüp
+# rakamları irileştiriyoruz. Kural yalnızca bu kutuya bağlı (`st-key-anapara`);
+# genel `input` seçicisi kullanmak diğer panellerin form alanlarını da bozardı.
+st.markdown(
+    """
+    <style>
+    .st-key-anapara [data-testid="stNumberInputContainer"] { min-height: 3.25rem; }
+    .st-key-anapara [data-testid="stNumberInputField"] {
+        font-size: 1.5rem;
+        height: 3.25rem;
+    }
+    .st-key-anapara label p { font-size: 1rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+principal = st.number_input(
+    "Anapara (TL)", min_value=0, value=1_000_000, step=50_000, key="anapara"
+)
 
 tab_fx, tab_dep, tab_loan, tab_fund, tab_agent, tab_sources, tab_logs = st.tabs(
     ["Döviz", "Mevduat & Kar Payı", "Kredi", "Fon Simülasyonu", "Agent",
