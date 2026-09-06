@@ -54,7 +54,8 @@ tek başına çalıştırıyorsan `.env` içine `PANEL_ALLOW_ENV_WRITE=1` yazara
 açabilirsin — o zaman kaydedilen anahtarı zamanlayıcı da bir sonraki turunda
 okur, yeniden başlatma gerekmez.
 
-Tasarım dokümanı: `tasarim.html` (kaynak: `/Users/hectorpiece/Downloads/tasarim.html`).
+Tasarım dokümanı (`tasarim.html`) depoya dahil değildir; bu README ile
+[ILERLEME.md](ILERLEME.md) ve [PLAN.md](PLAN.md) onun yerini tutar.
 
 > **Tamlık çetelesi** — neresi bitti, neresi eksik:
 > [ILERLEME.md](ILERLEME.md) sonundaki ÇETELE bölümü.
@@ -69,18 +70,91 @@ Kişisel kullanım içindir. Hiçbir bölümü yatırım tavsiyesi değildir.
 
 ## Kurulum
 
+Python 3.11 veya üstü gerekir (konteyner imajı 3.12 kullanır).
+
 ```bash
+git clone <depo-adresi> finans-agent
+cd finans-agent
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
-cp .env.example .env   # İSTEĞE BAĞLI — varsayılanlar çalışır.
-                       # LLM fallback ya da saklama süreleri için doldur.
 ```
 
+`.env` **zorunlu değildir** — her ayarın kodda bir varsayılanı var ve panel
+`.env` olmadan da açılır. Şu üç şeyden birini istiyorsan doldur: LLM
+fallback'i açmak, TCMB EVDS anahtarı vermek, saklama sürelerini/portu
+değiştirmek.
+
+```bash
+cp .env.example .env
+```
+
+Tüm değişkenlerin listesi ve hangisinin ne işe yaradığı aşağıda: [Ortam
+değişkenleri](#ortam-değişkenleri-env).
+
 ## Çalıştırma
+
+İki yol var, ve **eşdeğer değiller**. `run.py` `ROLE` değişkenine bakar;
+varsayılan `all` ile panelle birlikte **zamanlayıcıyı da** kaldırır — tek
+komutla çalışan kurulum budur:
+
+```bash
+./venv/bin/python run.py
+```
+
+Yalnızca paneli istiyorsan (veri toplama ayrı bir süreçte koşacaksa):
 
 ```bash
 ./venv/bin/streamlit run app/main.py
 ```
+
+Panel: <http://127.0.0.1:8501>
+
+> `run.py` paneli varsayılan olarak `0.0.0.0` adresine bağlar, yani makinenin
+> tüm ağ arayüzlerinden erişilebilir; panelde **oturum yönetimi yoktur**.
+> Ağa açık bir makinede `PANEL_ADDRESS=127.0.0.1` ver ya da önüne kimlik
+> doğrulamalı bir reverse proxy koy. `docker compose` kurulumunda portun
+> kendisi `127.0.0.1:8501:8501` ile bağlandığı için bu sorun oluşmaz.
+
+## Ortam değişkenleri (.env)
+
+Kopyalanabilir tam örnek — her satırın **neden** öyle olduğu yorumlarıyla
+birlikte — [`.env.example`](.env.example) dosyasındadır. Aşağıdaki tablo aynı
+değişkenlerin özetidir; hepsi isteğe bağlıdır, boş bırakılanlar için parantez
+içindeki varsayılan geçerlidir.
+
+| Değişken | Varsayılan | Ne yapar |
+|---|---|---|
+| `DB_URL` | *(boş → `data/finans_agent.db`)* | SQLite yerine Postgres: `postgresql+psycopg://kullanıcı:parola@sunucu:5432/finans_agent` |
+| `LLM_BASE_URL` | Gemini OpenAI-uyumlu ucu | Sağlayıcı değiştirmek için **kod değişmez**, bu üçü değişir |
+| `LLM_MODEL` | `gemini-3.5-flash-lite` | |
+| `LLM_API_KEY` | *(boş)* | Yalnızca **planlı** koşuları besler; panelin "Şimdi tazele" düğmesi bunu harcayamaz |
+| `LLM_FALLBACK_ENABLED` | `0` | **Güvenlik anahtarı.** Anahtar dolu olsa bile bu `1` olmadan tek çağrı yapılmaz |
+| `LLM_EXTRA_BODY` | *(boş)* | Sağlayıcıya özel ek gövde alanları (JSON). **Qwen kullanıyorsan `{"enable_thinking": false}` zorunlu**, yoksa token yakar |
+| `LLM_MAX_INPUT_CHARS` | `8000` | Modele giden HTML üst sınırı |
+| `LLM_MAX_OUTPUT_TOKENS` | `2000` | Yanıt üst sınırı |
+| `LLM_MAX_CALLS_PER_RUN` | `1` | Genel toplayıcı koşusu başına çağrı sınırı |
+| `LLM_AGENT_MAX_CALLS_PER_RUN` | `60` | Agent toplayıcısı banka **başına** bir çağrı yapar; kaynak sayısından küçük olursa gerisi sessizce eksik kalır |
+| `LLM_TIMEOUT_SECONDS` | `45` | Asılı kalan çağrıyı keser |
+| `LLM_PRICE_INPUT_PER_1M` / `..._OUTPUT_...` | *(boş → "bilinmiyor")* | USD / 1.000.000 token. `0` yazmak "bedava" demektir, boş bırakmak "bilinmiyor" |
+| `EVDS_API_KEY` | *(boş)* | TCMB'nin ücretsiz API'si — sektör ortalaması çapası için |
+| `ROLE` | `all` | `all` · `panel` · `scheduler` — `run.py` neyi kaldırsın |
+| `PANEL_ADDRESS` | `0.0.0.0` | **Ağa açık makinede `127.0.0.1` yap** (yukarıdaki uyarı) |
+| `PANEL_PORT` | `8501` | |
+| `SUPERVISE_INTERVAL_SECONDS` | `60` | `ROLE=all` iken ölen zamanlayıcı kaç saniyede bir yeniden denensin |
+| `RUN_ON_START` | `1` | Süreç başlarken bir kez hepsini çek — yeni kurulumda panel boş gelmesin |
+| `CATCHUP_INTERVAL_MINUTES` | `30` | Tazelik telafisi aralığı |
+| `RETAIN_HTTP_REQUEST_DAYS` | `30` | `0` = sınırsız sakla |
+| `RETAIN_SOURCE_RUN_DAYS` | `180` | |
+| `RETAIN_SCRAPE_RUN_DAYS` | `180` | |
+| `RETAIN_SNAPSHOT_DAYS` | `14` | Ham snapshot'lar |
+| `LOG_DIR` | `data/logs` | Boş bırakılırsa dönen dosya log'u kapanır, konsol kalır |
+| `LOG_LEVEL` | `INFO` | |
+| `DATA_DIR` | *(boş)* | Verilirse fon tanımları önce `<DATA_DIR>/funds.yaml`'dan okunur |
+| `FUNDS_YAML_PATH` | *(boş)* | Fon tanım dosyasını doğrudan gösterir, yukarıdakini atlar |
+| `PANEL_ALLOW_ENV_WRITE` | `0` | Panelin `.env`'e yazmasına izin verir. **Kapalı tut** — açıksa paneli açan herkes sunucunun anahtarını değiştirebilir |
+
+`llm_calls` ve `rate_changes` tabloları **asla budanmaz**; token/maliyet
+muhasebesi ile "oran en son ne zaman değişti" izi kümülatiftir.
 
 ### Veri toplama — panel bunu YAPMAZ
 
@@ -108,14 +182,27 @@ Elle tek seferlik toplama:
 Tek tek:
 
 ```bash
-./venv/bin/python worker.py fx_tcmb    # TCMB resmi kur
-./venv/bin/python worker.py fx_banks         # TEB, VakıfBank, Enpara, Emlak Katılım, Yapı Kredi, Akbank, Ziraat, Kuveyt Türk
-./venv/bin/python worker.py deposits         # VakıfBank + TEB + Enpara + Yapı Kredi + Akbank + Halkbank + Ziraat matrisi
-./venv/bin/python worker.py loan_rates       # VakıfBank + Akbank + Yapı Kredi + Enpara + Emlak Katılım
-./venv/bin/python worker.py profit_shares    # Emlak Katılım kâr paylaşım oranları
-./venv/bin/python worker.py profit_shares_kt # Kuveyt Türk kâr paylaşım oranları
-./venv/bin/python worker.py funds            # Ak Portföy fon fiyat serisi
+./venv/bin/python worker.py <hedef>
 ```
+
+Geçerli hedefler — `worker.py`'deki `COLLECTORS` kaydının tamamı:
+
+| Hedef | Ne toplar |
+|---|---|
+| `fx_tcmb` | TCMB resmi XML referans kuru (anahtarsız) |
+| `fx_banks` | Banka gişe/serbest kurları — TEB, VakıfBank, Enpara, Emlak Katılım, Yapı Kredi, Akbank, Ziraat, Kuveyt Türk |
+| `deposits` | Mevduat faiz matrisi — VakıfBank, TEB, Enpara, Yapı Kredi, Akbank, Halkbank, Ziraat |
+| `loan_rates` | Uç noktası olan bankaların kredi oranları — VakıfBank, Akbank, Yapı Kredi, Enpara, Emlak Katılım |
+| `loan_rates_llm` | **Agent** — uç noktası olmayan bankaların kredi oranı sayfa metninden çıkarılır. LLM kapalıysa tek token harcamadan biter |
+| `participation_rates` | Emlak Katılım **yıllık kâr payı** oranı (mevduatla aynı hesaba girer) |
+| `participation_rates_kt` | Kuveyt Türk yıllık kâr payı oranı |
+| `profit_shares` | Emlak Katılım kâr **paylaşım** oranı (getiri değil — hesaba girmez) |
+| `profit_shares_kt` | Kuveyt Türk kâr paylaşım oranı |
+| `funds` | Fon fiyat serileri — Ak / Garanti BBVA / Yapı Kredi Portföy, `config/funds.yaml`'daki fonlar |
+
+`participation_rates` ile `profit_shares` karıştırılmamalı: ilki yıllık
+**getiri** oranı (%33,97 gibi), ikincisi kârın müşteriye düşen **payı**
+(%93 gibi). İkincisi bir getiri değildir ve hiçbir hesaba girmez.
 
 Hepsi canlı doğrulandı (2026-08-24). Kur verisi gün içinde saatlik, oran verisi
 günde bir tazelenir.
@@ -161,10 +248,10 @@ docker compose exec panel tail -f data/logs/scheduler.log
 ## Testler
 
 ```bash
-./venv/bin/python -m pytest tests/ -v
+./venv/bin/pytest -q
 ```
 
-**154 test** (21 birim + 133 entegrasyon), hepsi ağsız ve saniyeler içinde koşar:
+**417 test**, hepsi ağsız ve saniyeler içinde koşar (2026-09-06 ölçümü: 15,6 sn):
 
 - `test_loan.py` / `test_deposit.py` / `test_fund.py` — `core/` saf fonksiyonları,
   elle hesaplanmış altın değerlerle.
@@ -198,6 +285,8 @@ doğrulama yapıldı; sonuçlar `config/sources.yaml` içinde `status` /
 | Yapı Kredi | ✅ | ✅ | ✅ | | `_ajaxproxy` hesaplama araçları; kur gişe kurudur, makas geniş |
 | Ziraat | ✅ | ✅ | | | Kur: robots kısıtı kaldırıldı. Mevduat: "Fiyatlar ve Oranlar" sayfasındaki İNTERNET şube tablosu. Kredi oranı yayınlanmıyor |
 | Ak Portföy | | | | | **Fon fiyat serisi** — 4 fon × ~2.160 gün |
+| Garanti BBVA Portföy | | | | | **Fon serisi** — 7 fon. Birim pay fiyatı DEĞİL, "1.000 TL'nin değeri" endeksi |
+| Yapı Kredi Portföy | | | | | **Fon fiyat serisi** — sitemap'ten 113 fon (76'sı açık), ~760 gün. Panelden **tüm katalog tek tuşla** eklenir |
 
 **Kâr paylaşım oranı ≠ faiz.** Katılım bankalarının yayınladığı sayı yıllık
 getiri değil, bankanın elde ettiği kârın müşteriye düşen yüzdesidir. Bunu faiz
@@ -216,7 +305,10 @@ kaynaklar `config/sources.yaml`'da `robots_override: true` ile işaretli.
 | Halkbank | TLS handshake tamamlanmıyor (coğrafi/IP kısıtı olabilir) |
 | Ziraat (mevduat/kredi) | Kur açıldı; oran için ayrı uç nokta bulunamadı, hesaplama sayfaları 404 |
 | CepteTEB (kredi) | Hesap makinesi uç noktası HTTP 500'e yönleniyor, sayfada gömülü oran da yok |
-| TEFAS | Uç nokta 404 + WAF "Request Rejected" — yerine Ak Portföy kullanılıyor |
+| TEFAS | Uç nokta 404 + WAF "Request Rejected" — yerine portföy şirketleri kullanılıyor |
+| **Deniz Portföy** | **Engel yok — veri güvenilir değil.** `FonGetiriList` uç noktası açık ama döndürdüğü fiyatlar sorulan tarihe ait değil: 90 fonun yalnızca 23'ü sitenin kendi tablosuyla tutuyor, bir PARA PİYASASI fonu düşüş gösteriyor ve yanıtta tarih alanı yok. Seriye yazmak fiyatları yanlış tarihe kaydetmek olurdu. Kanıt `config/sources.yaml` |
+| DenizBank (banka sitesi) | Fon fiyat verisi yayınlamıyor; `fon-fiyatlari` sayfası pazarlama içeriği, tarayıcıda hiçbir veri isteği atmıyor |
+| Yapı Kredi (banka sitesi) | 42 fonun yalnızca GÜNCEL fiyatı var, geçmiş seri yok; listesi zaten YK Portföy'ün alt kümesi |
 
 Ayrıntılı bulgular ve tamlık çetelesi: [ILERLEME.md](ILERLEME.md).
 
@@ -225,7 +317,7 @@ Ayrıntılı bulgular ve tamlık çetelesi: [ILERLEME.md](ILERLEME.md).
 - **Faz 0** — Hesaplama motoru + altın değer testleri: ✅
 - **Faz 1** — Şema + TCMB + fon fiyatları: ✅ (TEFAS emekliye ayrıldı, yerine Ak Portföy)
 - **Faz 2** — Streamlit v1: ✅ dört panel de gerçek veriyle, kurum kurum tablolar, tarayıcıda doğrulandı
-- **Faz 3** — Banka collector'ları: ✅ envanterde **doğrulanmamış kaynak kalmadı** (39 aktif, 19 kapalı — hepsi gerekçeli). 9 kur, 9 mevduat, 12 kredi, 2 kâr payı, 2 fon sağlayıcısı
+- **Faz 3** — Banka collector'ları: ✅ envanterde **doğrulanmamış kaynak kalmadı** (38 aktif, 12 kapalı — hepsi gerekçeli). 9 kur, 9 mevduat, 12 kredi, 2 kâr payı, 3 fon sağlayıcısı
 - **Faz 4** — Zamanlama + gözlem: ✅ `worker.py`, `scrape_runs`, tazelik şeridi, cron
 - **Faz 5** — LLM fallback: ✅ sağlayıcı `.env`'den takas edilebilir (kurulu: Qwen `qwen3-max`), token korumaları yerinde, **varsayılan kapalı**; `.env`'e anahtar girilip `LLM_FALLBACK_ENABLED=1` yapılınca açılır. Qwen'de `LLM_EXTRA_BODY={"enable_thinking": false}` ZORUNLU — bkz. `.env.example`
 
@@ -239,8 +331,13 @@ Tasarım dokümanındaki (`§01`) yapının birebir karşılığı — `collecto
 ### Tek konteyner (en basit)
 
 ```bash
-docker run -d -p 8501:8501 -v finans-data:/app/data finans-agent
+docker build -t finans-agent .
+docker run -d -p 127.0.0.1:8501:8501 -v finans-data:/app/data finans-agent
 ```
+
+Portu `-p 8501:8501` diye açarsan panel tüm ağ arayüzlerinden erişilebilir
+olur; panelde oturum yönetimi olmadığı için yukarıdaki komut kasıtlı olarak
+`127.0.0.1`'e bağlar.
 
 Varsayılan `ROLE=all`: **panel VE zamanlayıcı birlikte kalkar.** Eskiden imaj
 doğrudan Streamlit'i çalıştırıyordu; `docker run` diyen kullanıcı yalnızca
@@ -296,8 +393,11 @@ açıldığında 5 tablo + 2 sütun eklendi, eski kayıtlar yerinde kaldı.
 14 gün. Token/maliyet muhasebesi (`llm_calls`) ve oran değişim izi
 (`rate_changes`) **asla budanmaz** — ikisi de kümülatif.
 
-Panel **sadece localhost'a** bağlanır ve **oturum yönetimi yoktur**. Dışarı
-açacaksan önüne kimlik doğrulamalı bir reverse proxy koy.
+Panelde **oturum yönetimi yoktur** — açan herkes her şeyi görür. `compose`
+kurulumu portu `127.0.0.1:8501:8501` ile bağladığı için dışarı kapalıdır;
+`run.py`'yi konteynersiz çalıştırırken aynı korumayı `PANEL_ADDRESS=127.0.0.1`
+verir (varsayılanı `0.0.0.0`). Dışarı açacaksan önüne kimlik doğrulamalı bir
+reverse proxy koy.
 
 ## Raspberry Pi / systemd alternatifi
 
