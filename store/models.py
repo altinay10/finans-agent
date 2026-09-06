@@ -352,3 +352,83 @@ class SchedulerHeartbeat(Base):
     pid: Mapped[int] = mapped_column(nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     last_beat: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class LlmCredential(Base):
+    """Panelden kaydedilen LLM kimlik bilgileri — SIRAYLA denenir.
+
+    NEDEN VERİTABANI, `.env` DEĞİL: bu proje Docker'da iki ayrı konteyner
+    olarak koşuyor (panel + zamanlayıcı) ve `.env` imaja hiç girmiyor
+    (`.dockerignore`). Panelden `.env`'e yazmak üç ayrı sebeple işe yaramaz:
+    dosya yalnızca panel konteynerinin yazılabilir katmanında oluşur,
+    zamanlayıcı onu HİÇ göremez, ve `docker compose up --build` konteyneri
+    yeniden yarattığında dosya kaybolur. Veritabanı ise `finans-data` adlı
+    kalıcı volume'de ve İKİ konteyner de aynı dosyayı açıyor.
+
+    NEDEN TEK SATIR DEĞİL: anahtar biter, kotası dolar, iptal edilir. Tek
+    satır tutulsaydı o an sistem yine yarım kalırdı — panelden anahtar
+    girilebilmesinin bütün amacı buydu. Birden fazla satır tutulup EN SON
+    girilen kullanılıyor; o kullanılamaz hale gelirse bir öncekine
+    düşülüyor (bkz. llm/credentials.py).
+
+    NEDEN base_url/model DE BURADA: anahtar tek başına anlamsız. Aynı
+    anahtar Gemini'de geçerli, Qwen'de değil; `extra_body` de sağlayıcıya
+    özel (Qwen'de `enable_thinking`). Anahtarı sağlayıcısından ayırmak,
+    "kaydettim ama çalışmıyor" durumunun en sık sebebi olurdu.
+    """
+
+    __tablename__ = "llm_credentials"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    #: Sağlayıcıya özel ek gövde alanları, JSON metni. Boşsa gönderilmez.
+    extra_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 'ok' | 'failed' — kaydedilirken CANLI test edilir, sonra her
+    #: kullanılamama durumunda 'failed'e çekilir.
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ok")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class LlmFallbackState(Base):
+    """Ayrıştırıcısı kırılan toplayıcı için GERİ ÇEKİLME (backoff) sayacı.
+
+    NEDEN GEREKLİ: tazelik telafisi son BAŞARILI koşuya bakıyor. Bir
+    ayrıştırıcı kalıcı olarak kırılırsa o koşu bir daha asla başarılı
+    olmaz, yani telafi 30 dakikada bir sonsuza kadar yeniden dener ve her
+    denemede bir LLM çağrısı yakar. Günlerce fark edilmeyen bir hafta sonu
+    arızası, sessizce fatura üretirdi.
+
+    Sayaç YALNIZCA gerçekten LLM çağrısı yapılıp başarısız olduğunda artar.
+    "Agent kapalı" ya da "bütçe doldu" durumlarında hiç çağrı yapılmıyor,
+    dolayısıyla geri çekilecek bir şey de yok — bunlar sayacı kirletseydi
+    anahtarı olmayan bir kurulum 12 banka sayfasını 5 dakikada bir çekmeye
+    başlardı (bkz. collectors/base.py).
+    """
+
+    __tablename__ = "llm_fallback_state"
+
+    collector: Mapped[str] = mapped_column(String, primary_key=True)
+    consecutive_failures: Mapped[int] = mapped_column(default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AppSetting(Base):
+    """Sır OLMAYAN, panelden değiştirilebilen ayarlar (anahtar/değer).
+
+    Şimdilik tek kullanıcısı token birim fiyatları. `.env`'e yazılmıyor
+    çünkü (a) konteynerde `.env` yok, (b) fiyat bir kimlik bilgisi değil;
+    onu `PANEL_ALLOW_ENV_WRITE` iznine bağlamak, maliyetini görmek isteyen
+    kullanıcıyı sır yazma iznine muhtaç bırakırdı.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

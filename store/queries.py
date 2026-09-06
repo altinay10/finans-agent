@@ -4,7 +4,7 @@ core/ bu modülü asla import etmez; store -> core yönünde veri akar, tersi de
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import func, select, text
 
@@ -408,11 +408,27 @@ def source_health(hours: int = 48) -> list[dict]:
         return [dict(r) for r in rows]
 
 
-def llm_calls(limit: int = 100) -> list[dict]:
-    """LLM çağrı geçmişi ve token muhasebesi."""
+def llm_calls(
+    limit: int = 100,
+    *,
+    since: date | None = None,
+    until: date | None = None,
+) -> list[dict]:
+    """LLM çağrı geçmişi ve token muhasebesi.
+
+    `since`/`until` YEREL takvim günü olarak verilir (panelde kullanıcı gün
+    seçiyor) ve aralık her iki uçtan da DAHİLDİR. Kayıtlar hiç budanmıyor
+    (bkz. store/retention.py), yani geçmişin tamamı sorgulanabilir; tabloda
+    ne kadarının gösterileceği yalnızca bir görüntüleme kararı.
+    """
     with SessionLocal() as session:
+        sorgu = select(LlmCall)
+        if since is not None:
+            sorgu = sorgu.where(LlmCall.created_at >= datetime.combine(since, time.min))
+        if until is not None:
+            sorgu = sorgu.where(LlmCall.created_at <= datetime.combine(until, time.max))
         rows = session.execute(
-            select(LlmCall).order_by(LlmCall.id.desc()).limit(limit)
+            sorgu.order_by(LlmCall.id.desc()).limit(limit)
         ).scalars().all()
         return [
             {
@@ -423,13 +439,65 @@ def llm_calls(limit: int = 100) -> list[dict]:
                 "prompt_tokens": r.prompt_tokens,
                 "completion_tokens": r.completion_tokens,
                 "total_tokens": r.total_tokens,
+                "input_chars": r.input_chars,
                 "rows_recovered": r.rows_recovered,
                 "duration_ms": r.duration_ms,
                 "error": r.error,
+                # Bu üçü tabloda "hangi veri çekiliyordu" sorusunu
+                # cevaplıyor; şemada zaten vardı, sorgu döndürmüyordu.
+                "trigger_source": r.trigger_source,
+                "trigger_error": r.trigger_error,
+                "cost_usd": float(r.cost_usd) if r.cost_usd is not None else None,
                 "created_at": r.created_at,
             }
             for r in rows
         ]
+
+
+def llm_calls_count(since: date | None = None, until: date | None = None) -> int:
+    """Aralıktaki TOPLAM çağrı sayısı — "kaçının gösterildiği" ayrı bir karar."""
+    with SessionLocal() as session:
+        sorgu = select(func.count()).select_from(LlmCall)
+        if since is not None:
+            sorgu = sorgu.where(LlmCall.created_at >= datetime.combine(since, time.min))
+        if until is not None:
+            sorgu = sorgu.where(LlmCall.created_at <= datetime.combine(until, time.max))
+        return int(session.execute(sorgu).scalar() or 0)
+
+
+def llm_calls_span() -> tuple[date | None, date | None]:
+    """Kayıtlı en eski ve en yeni çağrının günü — tarih seçicinin sınırları."""
+    with SessionLocal() as session:
+        row = session.execute(
+            select(func.min(LlmCall.created_at), func.max(LlmCall.created_at))
+        ).one()
+    ilk, son = row
+    if isinstance(ilk, str):
+        ilk = datetime.fromisoformat(ilk)
+    if isinstance(son, str):
+        son = datetime.fromisoformat(son)
+    return (ilk.date() if ilk else None, son.date() if son else None)
+
+
+def llm_cost_totals_between(since: date | None, until: date | None) -> dict:
+    """Seçilen aralığın token ve maliyet toplamı."""
+    with SessionLocal() as session:
+        sorgu = select(
+            func.count().label("calls"),
+            func.coalesce(func.sum(LlmCall.prompt_tokens), 0).label("prompt_tokens"),
+            func.coalesce(func.sum(LlmCall.completion_tokens), 0).label("completion_tokens"),
+            func.coalesce(func.sum(LlmCall.total_tokens), 0).label("total_tokens"),
+            func.sum(LlmCall.cost_usd).label("cost_usd"),
+        ).select_from(LlmCall)
+        if since is not None:
+            sorgu = sorgu.where(LlmCall.created_at >= datetime.combine(since, time.min))
+        if until is not None:
+            sorgu = sorgu.where(LlmCall.created_at <= datetime.combine(until, time.max))
+        row = session.execute(sorgu).mappings().one()
+        sonuc = dict(row)
+        if sonuc.get("cost_usd") is not None:
+            sonuc["cost_usd"] = float(sonuc["cost_usd"])
+        return sonuc
 
 
 def llm_token_totals(days: int = 30) -> dict:

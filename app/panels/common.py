@@ -74,9 +74,106 @@ INSTITUTION_LABELS = {
 }
 
 
+_YAML_LABELS: dict[str, str] | None = None
+
+
+def _registry_labels() -> dict[str, str]:
+    """Kurum adları ENVANTERDEN okunur; yukarıdaki sözlük yalnızca yedek.
+
+    NEDEN: elle tutulan kopya kaydı. `config/sources.yaml` 19 kurum
+    tanımlıyor, buradaki sözlükte 12 tanesi vardı — DenizBank, ING, QNB,
+    Odeabank, Fibabanka, Anadolubank ve Burgan panelde ham kod olarak
+    görünüyordu ("DENIZBANK"). Sözlüğün üstündeki yorum tam da bunu
+    uyarıyor: "yeni kurum eklenince biri güncellenmeyi unutuyor". Çözüm
+    ikinci bir kopya tutmamak; kurum eklemek artık tek bir YAML satırı.
+    """
+    global _YAML_LABELS
+    if _YAML_LABELS is None:
+        try:
+            from config.loader import load_sources
+
+            _YAML_LABELS = {
+                kayit["code"]: kayit["name"]
+                for kayit in (load_sources().get("institutions") or [])
+                if kayit.get("code") and kayit.get("name")
+            }
+        except Exception:  # noqa: BLE001 - envanter okunamazsa sabit liste yeter
+            _YAML_LABELS = {}
+    return _YAML_LABELS
+
+
 def institution_label(code: str) -> str:
     """Bilinmeyen kod gelirse kodun kendisini döndür — panel patlamasın."""
-    return INSTITUTION_LABELS.get(code, code)
+    if code in INSTITUTION_LABELS:
+        return INSTITUTION_LABELS[code]
+    return _registry_labels().get(code, code)
+
+
+# --- LLM çağrısı: HANGİ VERİ çekiliyordu ------------------------------------
+#
+# Tabloda tek başına "loan_rates_llm" yazması yetmiyordu: o ad toplayıcıyı
+# söyler, ÇEKİLEN VERİYİ söylemez. Aynı toplayıcı 12 farklı banka sayfasına
+# gidiyor ve her satır ayrı bir çağrı. Hangi bankanın hangi kredisi olduğu
+# `trigger_source` alanında ZATEN kayıtlıydı (ör. "denizbank_tasit"), yalnızca
+# ham anahtar olarak duruyordu.
+
+#: Kredi türü kodları -> okunabilir karşılık. collectors/loan_rates_llm.py
+#: ile aynı sözlük; oradaki kaynak, buradaki gösterim.
+LOAN_TYPE_LABELS = {"personal": "ihtiyaç", "housing": "konut", "vehicle": "taşıt"}
+
+#: Onarım yedeği (generic fallback) çağrılarının açıklaması. Bu çağrılarda
+#: `trigger_source` yok: toplayıcının KENDİ ayrıştırıcısı kırıldığı için
+#: devreye giriyorlar, tek bir kaynağa ait değiller.
+FALLBACK_DESCRIPTIONS = {
+    "fx_banks": "Banka döviz kurları",
+    "fx_tcmb": "TCMB resmi referans kuru",
+    "deposit_rates": "Mevduat faiz oranları",
+    "loan_rates": "Kredi oranları (uç noktalı bankalar)",
+    "fund_prices": "Fon fiyat serileri",
+    "profit_shares": "Emlak Katılım kâr paylaşım oranları",
+    "profit_shares_kt": "Kuveyt Türk kâr paylaşım oranları",
+    "participation_rates": "Emlak Katılım yıllık kâr payı",
+    "participation_rates_kt": "Kuveyt Türk yıllık kâr payı",
+    "loan_rates_llm": "Agent — kredi oranı",
+}
+
+
+def _agent_pages() -> dict[str, dict]:
+    """`sources.yaml`'daki agent sayfaları. Sonuç süreç ömrü boyunca aynı."""
+    global _AGENT_PAGES
+    if _AGENT_PAGES is None:
+        try:
+            from config.loader import load_sources
+
+            _AGENT_PAGES = load_sources().get("loan_llm_endpoints") or {}
+        except Exception:  # noqa: BLE001 - envanter okunamazsa ham anahtar gösterilir
+            _AGENT_PAGES = {}
+    return _AGENT_PAGES
+
+
+_AGENT_PAGES: dict[str, dict] | None = None
+
+
+def llm_call_description(collector: str | None, trigger_source: str | None) -> str:
+    """"Bu çağrı tam olarak hangi veriyi çekiyordu?"
+
+    Agent çağrılarında banka + kredi türü ("DenizBank taşıt kredisi"),
+    onarım yedeğinde ise kırılan toplayıcının ne topladığı yazılır.
+    """
+    if trigger_source:
+        kayit = _agent_pages().get(trigger_source) or {}
+        kod = kayit.get("institution")
+        tur = LOAN_TYPE_LABELS.get(kayit.get("loan_type_hint") or "personal", "ihtiyaç")
+        if kod:
+            return f"{institution_label(kod)} {tur} kredisi"
+        # Envanterde yoksa ham anahtarı göster — uydurmaktansa dürüst.
+        return f"{trigger_source} ({tur} kredisi)"
+    if collector:
+        aciklama = FALLBACK_DESCRIPTIONS.get(collector)
+        if aciklama:
+            return f"{aciklama} — ayrıştırıcı kırıldı, LLM yedeği"
+        return collector
+    return "—"
 
 
 # --- para tutarı biçimleme --------------------------------------------------

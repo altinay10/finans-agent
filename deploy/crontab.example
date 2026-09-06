@@ -38,7 +38,10 @@
 # DenizBank, ING). GÜNDE BİR ve MESAİ SAATİNDE — faiz kararları çalışma
 # saatlerinde açıklanıyor, gece çekmenin anlamı yok. LLM_FALLBACK_ENABLED=0
 # ise tek token harcamadan biter.
-0  15   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py loan_rates_llm
+# Agent HAFTADA İKİ: banka başına bir LLM çağrısı yapıyor (12 aktif sayfa),
+# günlük koşu haftada 60 çağrı demekti. Pazartesi hafta açılışını,
+# Perşembe hafta ortası değişimini yakalıyor (bkz. scheduler.py).
+0  15   * * 1,4  cd /srv/finans-agent && ./venv/bin/python worker.py loan_rates_llm
 
 # Fon fiyatları akşam yayınlanır (Ak Portföy + Garanti BBVA Portföy)
 0  21   * * 1-5  cd /srv/finans-agent && ./venv/bin/python worker.py funds

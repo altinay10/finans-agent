@@ -29,8 +29,21 @@ süreci yeniden başlatmak panele bakan kişinin yapabileceği bir şey değil.
 
 | | Nereden gelir | Neyi besler |
 |---|---|---|
-| **Sunucu anahtarı** | `.env` | yalnızca **planlı** koşular (zamanlayıcı) |
-| **Oturum anahtarı** | panelde girilir | yalnızca **"Şimdi tazele"** düğmesi |
+| **Kayıtlı anahtar** | panelden kaydedilir → **veritabanı** (ya da `.env`) | yalnızca **planlı** koşular (zamanlayıcı) |
+| **Oturum anahtarı** | panelde girilir, diske yazılmaz | yalnızca **"Agent'ı çalıştır"** düğmesi |
+
+Kalıcı anahtar `.env`'e **değil veritabanına** yazılır ve bu teknik bir
+zorunluluk: `.env` `.dockerignore`'da olduğu için imaja hiç girmiyor, panel
+ile zamanlayıcı ayrı konteynerler, üstelik `docker compose up --build` panel
+konteynerinin yazacağı dosyayı her yeniden kurulumda silerdi. Veritabanı ise
+`finans-data` volume'ünde ve iki konteyner de aynı dosyayı açıyor.
+
+**Anahtar kaydedilmeden önce canlı test edilir** (en küçük istek, `max_tokens=1`);
+çalışmayan anahtar kaydedilmez. Birden fazla anahtar tutulabilir: **en son
+kaydedilen** kullanılır, o kimlik hatası verirse (kota doldu, iptal edildi)
+otomatik olarak bir öncekine düşülür. Anahtarın sağlayıcısı da (taban URL,
+model, ek gövde alanları) anahtarla birlikte saklanır — aynı anahtar Gemini'de
+geçerli, Qwen'de değil.
 
 **"Şimdi tazele" sunucunun anahtarını harcayamaz.** Aksi halde paneli açan
 herkes bir düğmeye — üstelik sınırsız tekrarla — basarak sahibinin faturasını
@@ -47,12 +60,10 @@ aynı şekilde.
 
 Anahtar hiçbir yerde tam gösterilmez, yalnızca son dört hane.
 
-**Panelden `.env` yazımı varsayılan olarak KAPALI.** "Kalıcı kaydet" düğmesi
-ziyaretçinin anahtarını *sunucunun* anahtarı yapar; panel dışarı açıksa
-herhangi biri sahibinin anahtarını sessizce değiştirebilir. Kendi makinende
-tek başına çalıştırıyorsan `.env` içine `PANEL_ALLOW_ENV_WRITE=1` yazarak
-açabilirsin — o zaman kaydedilen anahtarı zamanlayıcı da bir sonraki turunda
-okur, yeniden başlatma gerekmez.
+**"Sürekli kullanmak için kaydet" düğmesi ziyaretçinin anahtarını sunucunun
+anahtarı yapar.** Panel `compose` kurulumunda `127.0.0.1`'e bağlı olduğu için
+dışarıdan erişilemez; paneli bir reverse proxy ile dışarı açacaksan önüne
+kimlik doğrulama koy, aksi halde açan herkes kayıtlı anahtarı değiştirebilir.
 
 Tasarım dokümanı (`tasarim.html`) depoya dahil değildir; bu README ile
 [ILERLEME.md](ILERLEME.md) ve [PLAN.md](PLAN.md) onun yerini tutar.
@@ -151,7 +162,7 @@ içindeki varsayılan geçerlidir.
 | `LOG_LEVEL` | `INFO` | |
 | `DATA_DIR` | *(boş)* | Verilirse fon tanımları önce `<DATA_DIR>/funds.yaml`'dan okunur |
 | `FUNDS_YAML_PATH` | *(boş)* | Fon tanım dosyasını doğrudan gösterir, yukarıdakini atlar |
-| `PANEL_ALLOW_ENV_WRITE` | `0` | Panelin `.env`'e yazmasına izin verir. **Kapalı tut** — açıksa paneli açan herkes sunucunun anahtarını değiştirebilir |
+| `PANEL_ALLOW_ENV_WRITE` | — | **Artık okunmuyor** (2026-09-06). Panelden `.env`'e yazma yolu kaldırıldı; kalıcı anahtar veritabanına yazılıyor |
 
 `llm_calls` ve `rate_changes` tabloları **asla budanmaz**; token/maliyet
 muhasebesi ile "oran en son ne zaman değişti" izi kümülatiftir.
@@ -193,7 +204,7 @@ Geçerli hedefler — `worker.py`'deki `COLLECTORS` kaydının tamamı:
 | `fx_banks` | Banka gişe/serbest kurları — TEB, VakıfBank, Enpara, Emlak Katılım, Yapı Kredi, Akbank, Ziraat, Kuveyt Türk |
 | `deposits` | Mevduat faiz matrisi — VakıfBank, TEB, Enpara, Yapı Kredi, Akbank, Halkbank, Ziraat |
 | `loan_rates` | Uç noktası olan bankaların kredi oranları — VakıfBank, Akbank, Yapı Kredi, Enpara, Emlak Katılım |
-| `loan_rates_llm` | **Agent** — uç noktası olmayan bankaların kredi oranı sayfa metninden çıkarılır. LLM kapalıysa tek token harcamadan biter |
+| `loan_rates_llm` | **Agent** — uç noktası olmayan bankaların kredi oranı sayfa metninden çıkarılır. Planlı koşusu **Pazartesi ve Perşembe 15:00**. LLM kapalıysa tek token harcamadan biter |
 | `participation_rates` | Emlak Katılım **yıllık kâr payı** oranı (mevduatla aynı hesaba girer) |
 | `participation_rates_kt` | Kuveyt Türk yıllık kâr payı oranı |
 | `profit_shares` | Emlak Katılım kâr **paylaşım** oranı (getiri değil — hesaba girmez) |
@@ -207,7 +218,7 @@ Geçerli hedefler — `worker.py`'deki `COLLECTORS` kaydının tamamı:
 Hepsi canlı doğrulandı (2026-08-24). Kur verisi gün içinde saatlik, oran verisi
 günde bir tazelenir.
 
-**Zamanlayıcının üç güvencesi** (`scheduler.py`) — sunucuya kurulup
+**Zamanlayıcının dört güvencesi** (`scheduler.py`) — sunucuya kurulup
 unutulacağı varsayımıyla:
 
 1. **Plan** — her toplayıcı kendi saatinde koşar.
@@ -217,6 +228,13 @@ unutulacağı varsayımıyla:
 3. **Tazelik telafisi** — 30 dakikada bir, son *başarılı* koşusu kendi tazelik
    sınırını aşan toplayıcılar yeniden denenir. Bu olmadan, planlanan saatte
    hata alan bir toplayıcı ertesi güne kadar bayat kalır ve kimse fark etmezdi.
+4. **Geri çekilme (backoff)** — ayrıştırıcısı kırılıp LLM yedeği de
+   başaramayan toplayıcı, ilk 6 denemede **5 dakikada bir**, sonrasında
+   **4 saatte bir** denenir. Bu olmadan telafi mekanizması kalıcı bir arızayı
+   30 dakikada bir sonsuza kadar yeniden dener ve her denemede bir LLM çağrısı
+   yakardı. Sayaç yalnızca **gerçekten çağrı yapılıp başarısız olduğunda**
+   artar: "agent kapalı" ve "bütçe doldu" tek token harcamaz, dolayısıyla geri
+   çekilecek bir şey de yoktur.
 
 ## Log ve gözlem
 

@@ -22,7 +22,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from app.panels.common import format_local
+from app.panels.common import format_local, llm_call_description
 from store import queries
 
 STATUS_ICON = {"ok": "🟢", "failed": "🔴", "empty": "🟠"}
@@ -437,12 +437,17 @@ def _render_llm() -> None:
     cols[2].metric("Çıktı token", f"{totals['completion_tokens']:,}")
     cols[3].metric("Toplam token", f"{totals['total_tokens']:,}")
     cost = totals.get("cost_usd")
-    cols[4].metric("Tahmini maliyet", f"${cost:,.4f}" if cost else "—")
-    if not cost:
+    # `if cost else` YAZILAMAZ: 0.0 geçerli bir maliyettir (ücretsiz katman)
+    # ve falsy olduğu için "—" görünüyordu. Kod başka her yerde "sıfır ile
+    # bilinmiyor ayrıdır" derken tam burada ikisini karıştırıyordu.
+    cols[4].metric("Tahmini maliyet", f"${cost:,.5f}" if cost is not None else "bilinmiyor")
+    if cost is None:
         st.caption(
             "Maliyet **bilinmiyor** (sıfır değil): birim fiyat tanımlı değil. "
-            "`.env` içine `LLM_PRICE_INPUT_PER_1M` ve `LLM_PRICE_OUTPUT_PER_1M` "
-            "girilirse hesaplanır. Uydurma bir fiyat yazmaktansa boş bırakılıyor."
+            "**Agent sekmesindeki _Birim fiyat_ bölümünden** girebilirsin "
+            "(ya da `.env` içine `LLM_PRICE_INPUT_PER_1M` / "
+            "`LLM_PRICE_OUTPUT_PER_1M` yazabilirsin). Uydurma bir fiyat "
+            "yazmaktansa boş bırakılıyor."
         )
 
     calls = _llm_triggers(100)
@@ -458,12 +463,16 @@ def _render_llm() -> None:
                 {
                     "Zaman": _stamp(c["created_at"]),
                     "Durum": LLM_STATUS_LABEL.get(c["status"], c["status"]),
+                    # Toplayıcı adı hangi veriyi çektiğini söylemiyordu;
+                    # aynı toplayıcı 12 ayrı banka sayfasına gidiyor.
+                    "Çekilen veri": llm_call_description(c["collector"], c["trigger_source"]),
                     "Toplayıcı": c["collector"] or "—",
-                    "Tetikleyen kaynak": c["trigger_source"] or "—",
                     "Tetikleyen hata": (c["trigger_error"] or "—")[:120],
                     "Model": c["model"],
                     "Token": c["total_tokens"],
-                    "Maliyet": f"${c['cost_usd']:,.5f}" if c["cost_usd"] else "—",
+                    "Maliyet": (
+                        f"${c['cost_usd']:,.5f}" if c["cost_usd"] is not None else "—"
+                    ),
                     "Kurtarılan satır": c["rows_recovered"],
                     "Süre (ms)": c["duration_ms"],
                 }

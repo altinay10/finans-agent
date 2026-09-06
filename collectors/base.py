@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from collectors import http
 
+from store import llm_backoff
 from store.clock import utc_now
 from store.db import SessionLocal
 from store.models import ScrapeRun
@@ -29,6 +30,18 @@ SNAPSHOT_DIR = REPO_ROOT / "data" / "snapshots"
 
 class ParseError(Exception):
     """parse() bir sayfadan beklenen kaydı çıkaramadığında fırlatılır."""
+
+
+def _llm_gercekten_denendi(fallback_exc: Exception) -> bool:
+    """Fallback bir ÇAĞRI yaptı mı, yoksa kapıdan mı döndü?
+
+    `LlmDisabled` (agent kapalı) ve `LlmBudgetExceeded` (koşu bütçesi dolu)
+    tek token harcamaz — bunlar yapılandırma durumu, arıza değil. Geri
+    çekilme sayacını yalnızca gerçek çağrılar beslemeli.
+    """
+    from llm.extract import LlmBudgetExceeded, LlmDisabled
+
+    return not isinstance(fallback_exc, (LlmDisabled, LlmBudgetExceeded))
 
 
 class SanityCheckError(Exception):
@@ -120,6 +133,10 @@ class Collector(ABC):
         # değil, korumanın çalıştığının kanıtı. Hata metnine gömülü kalırsa
         # "kaç kez saçma veri geldi" sorusu sayılamaz.
         phase = "fetch"
+        # Her koşuda sıfırlanmalı: uzun ömürlü panel sürecinde aynı nesne
+        # yeniden kullanılırsa önceki koşunun bayrağı sızardı.
+        self._llm_denendi = False
+        self._llm_hatasi = None
         try:
             fetch_started = time.monotonic()
             raw = self.fetch()
@@ -145,6 +162,13 @@ class Collector(ABC):
                     # Fallback kapalı, bütçe dolmuş ya da model de beceremedi.
                     # Orijinal parse hatasını kaybetmeden çık — asıl sorun o.
                     logger.warning("%s: LLM fallback devreye giremedi: %s", self.name, fallback_exc)
+                    # GERİ ÇEKİLME için ayrım: "çağrı yapıldı ve olmadı" mı,
+                    # yoksa "çağrı hiç yapılmadı" mı? Kapalı agent ya da
+                    # dolmuş bütçe token harcamaz; bunları arıza sayıp 5
+                    # dakikada bir yeniden denemek, anahtarı olmayan bir
+                    # kurulumda bankaları boşuna dövmek olurdu.
+                    self._llm_denendi = _llm_gercekten_denendi(fallback_exc)
+                    self._llm_hatasi = str(fallback_exc)
                     raise exc
 
             phase = "sanity"
@@ -152,6 +176,8 @@ class Collector(ABC):
             phase = "persist"
             self.persist(records, run_id)
             self._finish_run(run_id, status=status, rows_written=len(records))
+            if llm_backoff.counts_for_backoff(trigger):
+                llm_backoff.record_success(self.name)
             return RunResult(ok=True, rows=len(records), status=status)
 
         except Exception as exc:  # noqa: BLE001 - toplayıcı asla process'i düşürmemeli
@@ -161,6 +187,16 @@ class Collector(ABC):
             self._finish_run(
                 run_id, status="failed", rows_written=0, error=str(exc), failure_kind=phase
             )
+            # Geri çekilme YALNIZCA ayrıştırma aşamasında ve LLM gerçekten
+            # denenmişse. 'fetch' banka sitesinin arızası (LLM'le ilgisi yok),
+            # 'sanity' ise korumanın çalıştığının kanıtı — ikisi de burada
+            # sayaç artırmaz.
+            if (
+                phase == "parse"
+                and getattr(self, "_llm_denendi", False)
+                and llm_backoff.counts_for_backoff(trigger)
+            ):
+                llm_backoff.record_failure(self.name, getattr(self, "_llm_hatasi", None))
             return RunResult(ok=False, status="failed", error=str(exc), failure_kind=phase)
         finally:
             if source_ctx is not None:

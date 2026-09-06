@@ -63,13 +63,75 @@ class LlmDisabled(RuntimeError):
 _calls_made: ContextVar[int] = ContextVar("llm_calls_made", default=0)
 
 
+#: Bu koşuda denenmiş veritabanı kimlikleri — aynı anahtarı iki kez
+#: denememek ve düşme döngüsünü sınırlamak için.
+_tried_credentials: ContextVar[frozenset] = ContextVar(
+    "llm_tried_credentials", default=frozenset()
+)
+
+
 def reset_budget() -> None:
     """Her koşunun BAŞINDA çağrılır (worker, scheduler ve panel)."""
     _calls_made.set(0)
+    _tried_credentials.set(frozenset())
 
 
 def calls_made() -> int:
     return _calls_made.get()
+
+
+def _retry_with_next_credential(exc: Exception) -> bool:
+    """Hata anahtarın kendisindeyse bir sonraki kayıtlı anahtara geçer.
+
+    Dönen True: bağlam yeni anahtara ayarlandı, çağıran bir kez daha
+    denemeli. False: ya hata anahtarla ilgili değil, ya da denenecek başka
+    anahtar kalmadı.
+
+    Bütçe sayacı BİLEREK geri alınmıyor: kimlik hatası token harcamaz ama
+    sayacı geri almak, bozuk bir anahtar zinciriyle sınırsız deneme
+    döngüsü açardı.
+    """
+    from llm import credentials
+
+    if not credentials.is_credential_error(exc):
+        return False
+    kullanilan = settings.current_credential_id()
+    if kullanilan is None:
+        # Oturum anahtarı ya da .env anahtarı — düşecek bir zincir yok.
+        return False
+    credentials.mark_failed(kullanilan, str(exc))
+    denenen = set(_tried_credentials.get()) | {kullanilan}
+    _tried_credentials.set(frozenset(denenen))
+    sonraki = credentials.first_untried(denenen)
+    if sonraki is None:
+        logger.warning("kimlik #%s başarısız ve denenmemiş yedek anahtar yok", kullanilan)
+        return False
+    logger.warning(
+        "kimlik #%s kullanılamadı (%s) — #%s ile yeniden deneniyor",
+        kullanilan, str(exc)[:120], sonraki.id,
+    )
+    # KİMLİK HATASI TOKEN HARCAMAZ, bu yüzden bütçe sayacı geri alınıyor;
+    # aksi halde bütçesi 1 olan onarım fallback'i yedek anahtarı hiç
+    # deneyemeden "sınıra ulaşıldı" derdi. Döngü riski yok: her anahtar
+    # `denenen` kümesi sayesinde en fazla bir kez denenir.
+    _calls_made.set(max(0, _calls_made.get() - 1))
+    # Bağlamı KALICI olarak değiştiriyoruz (context manager değil): çağıran
+    # aynı koşu içinde tekrar deneyecek ve koşu bitince süreç bağlamı zaten
+    # yeni bir koşuya geçecek.
+    settings._api_key_override.set(sonraki.api_key)
+    settings._base_url_override.set(sonraki.base_url)
+    settings._model_override.set(sonraki.model)
+    settings._extra_body_override.set(sonraki.extra_body)
+    settings._credential_id.set(sonraki.id)
+    return True
+
+
+def _mark_current_credential_ok() -> None:
+    from llm import credentials
+
+    kullanilan = settings.current_credential_id()
+    if kullanilan is not None:
+        credentials.mark_ok(kullanilan)
 
 
 def _condense(html: str, max_chars: int) -> str:
@@ -98,6 +160,7 @@ def extract(
     trigger_source: str | None = None,
     budget: int | None = None,
     prompt: str | None = None,
+    _credential_retry: bool = False,
 ) -> list[BaseModel]:
     """HTML'den yapılandırılmış kayıt çıkarır ve HER SONUCU kalıcı olarak kaydeder.
 
@@ -110,7 +173,7 @@ def extract(
     if not settings.fallback_enabled():
         record_llm_call(
             trigger_error=trigger_error, trigger_source=trigger_source,
-            model=settings.LLM_MODEL, status="disabled", collector=collector, run_id=run_id,
+            model=settings.current_model(), status="disabled", collector=collector, run_id=run_id,
             error="LLM_FALLBACK_ENABLED=0",
         )
         raise LlmDisabled(
@@ -123,7 +186,7 @@ def extract(
     if yapilan >= limit:
         record_llm_call(
             trigger_error=trigger_error, trigger_source=trigger_source,
-            model=settings.LLM_MODEL, status="budget_exceeded", collector=collector,
+            model=settings.current_model(), status="budget_exceeded", collector=collector,
             run_id=run_id,
             error=f"koşu başına sınır: {limit}",
         )
@@ -140,7 +203,7 @@ def extract(
     try:
         client = get_client()
         resp = client.chat.completions.create(
-            model=settings.LLM_MODEL,
+            model=settings.current_model(),
             response_format={
                 "type": "json_schema",
                 "json_schema": {"name": "extraction", "schema": wrapper.model_json_schema()},
@@ -150,15 +213,26 @@ def extract(
             max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
             # Sağlayıcıya özel alanlar (ör. Qwen'de enable_thinking=False).
             # Boşsa hiçbir şey eklenmez — Gemini'de olduğu gibi.
-            extra_body=settings.LLM_EXTRA_BODY or None,
+            extra_body=settings.current_extra_body() or None,
         )
     except Exception as exc:  # noqa: BLE001 - başarısız çağrı da kaydedilmeli
         record_llm_call(
             trigger_error=trigger_error, trigger_source=trigger_source,
-            model=settings.LLM_MODEL, status="failed", collector=collector, run_id=run_id,
+            model=settings.current_model(), status="failed", collector=collector, run_id=run_id,
             input_chars=len(trimmed), error=str(exc),
             duration_ms=int((time.monotonic() - started) * 1000),
         )
+        # ANAHTAR DÜŞÜRME: anahtarın kotası dolduysa ya da iptal edildiyse
+        # elde başka anahtar varken koşuyu düşürmek gereksiz veri kaybı.
+        # YALNIZCA kimlik hatalarında (401/403/429) düşülür — zaman aşımı ya
+        # da 500 sağlayıcının geçici arızasıdır ve sağlam bir anahtarı
+        # boşuna 'failed' işaretlemek onu zincirin sonuna atardı.
+        if _retry_with_next_credential(exc):
+            return extract(
+                html, schema, collector=collector, run_id=run_id,
+                trigger_error=trigger_error, trigger_source=trigger_source,
+                budget=budget, prompt=prompt, _credential_retry=True,
+            )
         raise
 
     usage = getattr(resp, "usage", None)
@@ -205,7 +279,7 @@ def extract(
     except Exception as exc:  # noqa: BLE001 - token yandı ama sonuç kullanılamadı
         record_llm_call(
             trigger_error=trigger_error, trigger_source=trigger_source,
-            model=settings.LLM_MODEL, status="failed", collector=collector, run_id=run_id,
+            model=settings.current_model(), status="failed", collector=collector, run_id=run_id,
             prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
             input_chars=len(trimmed), error=f"yanıt ayrıştırılamadı: {exc}",
             duration_ms=int((time.monotonic() - started) * 1000),
@@ -214,13 +288,16 @@ def extract(
 
     record_llm_call(
         trigger_error=trigger_error, trigger_source=trigger_source,
-        model=settings.LLM_MODEL, status="ok", collector=collector, run_id=run_id,
+        model=settings.current_model(), status="ok", collector=collector, run_id=run_id,
         prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
         input_chars=len(trimmed), rows_recovered=len(rows),
         duration_ms=int((time.monotonic() - started) * 1000),
     )
+    # Çalışan anahtar 'failed' damgası taşıyorsa (kotası yenilenmiş olabilir)
+    # temizlensin; aksi halde zincirin sonunda kalmaya devam ederdi.
+    _mark_current_credential_ok()
     logger.warning(
         "LLM fallback kullanıldı: collector=%s model=%s girdi=%s çıktı=%s token, %s kayıt",
-        collector, settings.LLM_MODEL, prompt_tokens, completion_tokens, len(rows),
+        collector, settings.current_model(), prompt_tokens, completion_tokens, len(rows),
     )
     return rows

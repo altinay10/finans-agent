@@ -34,10 +34,14 @@ def get_client() -> OpenAI:
     key = settings.current_api_key()
     if not key:
         raise RuntimeError(
-            "LLM_API_KEY tanımlı değil — .env dosyasına bak (.env.example örnek alır). "
+            "LLM anahtarı tanımlı değil — Agent sekmesinden kaydedebilir ya da "
+            ".env dosyasına yazabilirsin (.env.example örnek alır). "
             "Fallback yalnızca parse() kırıldığında tetiklenir; anahtar olmadan çalışmaz."
         )
-    return _client(settings.LLM_BASE_URL, key, settings.LLM_TIMEOUT_SECONDS)
+    # TABAN URL DE BAĞLAMDAN OKUNUYOR: anahtar sağlayıcısından ayrılamaz.
+    # `_client` önbelleği zaten (base_url, key, timeout) üçlüsüyle
+    # anahtarlandığı için farklı sağlayıcılar birbirinin istemcisini almaz.
+    return _client(settings.current_base_url(), key, settings.LLM_TIMEOUT_SECONDS)
 
 
 def clear_client_cache() -> None:

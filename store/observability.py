@@ -78,8 +78,12 @@ def record_llm_call(
         total = (prompt_tokens or 0) + (completion_tokens or 0)
     try:
         from llm.settings import estimate_cost_usd
+        from store.app_settings import price_rates
 
-        cost = estimate_cost_usd(prompt_tokens, completion_tokens)
+        # Birim fiyat artık panelden de girilebiliyor ve veritabanına
+        # yazılıyor; kayıt yoksa `.env`'deki değere düşülür.
+        girdi_fiyat, cikti_fiyat = price_rates()
+        cost = estimate_cost_usd(prompt_tokens, completion_tokens, girdi_fiyat, cikti_fiyat)
     except Exception:  # noqa: BLE001 - fiyat okunamıyorsa maliyet bilinmiyor
         cost = None
     try:

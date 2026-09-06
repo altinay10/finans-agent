@@ -7,6 +7,8 @@ takılan istemci, `.env`'i ezmeyen `load_dotenv`, ve ekrana düşen anahtar.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import llm.settings as settings
@@ -246,22 +248,20 @@ def test_two_sessions_do_not_see_each_others_key(monkeypatch):
     assert gorulen == {"a": "anahtar-A", "b": "anahtar-B"}
 
 
-def test_writing_to_env_from_the_panel_is_off_by_default(monkeypatch):
-    """"Kalıcı kaydet" ziyaretçinin anahtarını SUNUCUNUN anahtarı yapar.
+def test_the_panel_no_longer_writes_the_key_to_env(monkeypatch):
+    """Kalıcı anahtar `.env`'e DEĞİL veritabanına yazılır.
 
-    Panel dışarı açıksa herhangi biri sahibinin anahtarını sessizce
-    değiştirebilirdi. Açık uçlu bırakmak yerine açıkça açılması gerekiyor.
+    `.env` `.dockerignore`'da olduğu için imaja hiç girmiyor; panel ile
+    zamanlayıcı ayrı konteynerler ve panelin yazacağı dosyayı zamanlayıcı
+    göremezdi. Üstelik `docker compose up --build` onu her yeniden
+    kurulumda silerdi. Bu test o yolun geri gelmediğini bekçiliyor.
     """
     from app.panels import agent
 
-    monkeypatch.delenv("PANEL_ALLOW_ENV_WRITE", raising=False)
-    assert agent.env_write_allowed() is False
+    assert not hasattr(agent, "env_write_allowed")
+    kaynak = Path(agent.__file__).read_text(encoding="utf-8")
+    assert "env_file.set_values" not in kaynak
 
-    monkeypatch.setenv("PANEL_ALLOW_ENV_WRITE", "1")
-    assert agent.env_write_allowed() is True
-
-
-# ----------------------------------------------------- testler .env'siz ----
 
 def test_the_test_suite_never_inherits_a_live_key():
     """Bu gerçekten yaşandı: `.env`'e çalışan bir anahtar konunca test paketi

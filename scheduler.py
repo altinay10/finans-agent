@@ -27,6 +27,7 @@ import logging
 import os
 import signal
 import threading
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
@@ -34,6 +35,7 @@ from sqlalchemy import text
 from llm import settings as llm_settings
 from store.clock import ISTANBUL
 from store import heartbeat
+from store import llm_backoff
 from store.db import SessionLocal, init_db
 from store.retention import purge
 
@@ -54,15 +56,38 @@ SCHEDULE: list[tuple[str, int | None, int]] = [
     ("profit_shares_kt", 20, 35),
     ("participation_rates", 20, 40),
     ("participation_rates_kt", 20, 45),
-    # Agent toplayıcısı GÜNDE BİR ve mesai saatinde: faiz kararları
-    # çalışma saatlerinde açıklanıyor, gece çekmenin anlamı yok
-    # (kullanıcı isteği, 2026-08-26).
+    # Agent toplayıcısı mesai saatinde: faiz kararları çalışma saatlerinde
+    # açıklanıyor, gece çekmenin anlamı yok (kullanıcı isteği, 2026-08-26).
+    # Sıklığı 2026-09-06'da HAFTADA İKİ'ye düşürüldü — bkz. AGENT_GUNLERI.
     ("loan_rates_llm", 15, 0),
     ("funds", 21, 0),
 ]
 
 HOURLY_WINDOW = range(9, 19)  # 09:00-18:00
 WEEKDAYS = range(0, 5)        # Pazartesi-Cuma
+
+# TOPLAYICIYA ÖZEL GÜN KISITI. Yazılmayan toplayıcı için WEEKDAYS geçerli.
+#
+# NEDEN AYRI SÖZLÜK, SCHEDULE'a dördüncü alan DEĞİL: SCHEDULE üçlü olarak
+# üç ayrı yerde açılıyor (`due_by_schedule` ve iki test). Dördüncü alan
+# eklemek onları ValueError ile düşürürdü; kısıtı ayrı tutmak hem geriye
+# dönük uyumlu hem de "istisnası olan tek toplayıcı" gerçeğini görünür
+# kılıyor.
+#
+# NEDEN HAFTADA İKİ: agent tek toplayıcı içinde banka BAŞINA bir LLM çağrısı
+# yapıyor (şu an 12 aktif sayfa). Günlük koşu haftada 60 çağrı demekti;
+# bankalar pazarlama sayfalarındaki oranları bu sıklıkta değiştirmiyor.
+# Pazartesi hafta açılışını, Perşembe hafta ortası değişimini yakalıyor
+# (kullanıcı kararı, 2026-09-06).
+AGENT_GUNLERI = frozenset({0, 3})  # Pazartesi, Perşembe
+SCHEDULE_WEEKDAYS: dict[str, frozenset[int]] = {
+    "loan_rates_llm": AGENT_GUNLERI,
+}
+
+
+def allowed_weekdays(name: str) -> frozenset[int]:
+    """Bu toplayıcı hangi günler koşabilir."""
+    return SCHEDULE_WEEKDAYS.get(name, frozenset(WEEKDAYS))
 
 # Bir toplayıcının verisi bu süreden eskiyse yeniden denenir. Kur gün içinde
 # değişir, oranlar günlük yayınlanır — sınırlar buna göre. Hafta sonu ve
@@ -144,6 +169,8 @@ def due_by_schedule(now: datetime) -> list[str]:
     for name, hour, minute in SCHEDULE:
         if now.minute != minute:
             continue
+        if now.weekday() not in allowed_weekdays(name):
+            continue
         if hour is None:
             if now.hour in HOURLY_WINDOW:
                 due.append(name)
@@ -152,6 +179,7 @@ def due_by_schedule(now: datetime) -> list[str]:
     return due
 
 
+@lru_cache(maxsize=None)
 def _db_name(key: str) -> str:
     """worker.py kayıt anahtarı -> scrape_runs.collector değeri.
 
@@ -164,6 +192,10 @@ def _db_name(key: str) -> str:
     """
     from worker import COLLECTORS
 
+    # ÖNBELLEKLİ: bu fonksiyon toplayıcıyı GERÇEKTEN inşa ediyor ve
+    # `LlmLoanRateCollector.__init__` her seferinde sources.yaml okuyor.
+    # Geri çekilme kontrolü 20 saniyede bir koştuğu için önbelleksiz hâli
+    # saatte yüzlerce gereksiz YAML ayrıştırması demekti. Eşleme statik.
     return COLLECTORS[key]().name
 
 
@@ -215,14 +247,47 @@ def due_by_staleness(now_utc: datetime | None = None) -> list[str]:
     Planlanan saatte hata alan bir toplayıcı bu sayede ertesi güne kadar
     bayat kalmaz.
     """
+    # GERİ ÇEKİLMEDEKİLER BURADA ATLANIR. Kırık bir ayrıştırıcının son
+    # başarılı koşusu tanım gereği eskidir, yani bu liste onu her 30
+    # dakikada bir "bayat" diye döndürürdü. Geri çekilme mekanizması onun
+    # temposunu zaten yönetiyor; iki mekanizma birden ateşlerse 5 dakikalık
+    # aralık fiilen 30 dakikada bir fazladan çağrıya dönüşür.
+    geri_cekilen = llm_backoff.backing_off()
     stale = []
     for name, age in last_success_ages(now_utc).items():
         limit = MAX_AGE_HOURS.get(name)
         if limit is None:
             continue
+        if _db_name(name) in geri_cekilen:
+            continue
         if age is None or age > limit:
             stale.append(name)
     return stale
+
+
+def due_by_backoff(now: datetime, now_utc: datetime | None = None) -> list[str]:
+    """Geri çekilme sırası gelen toplayıcılar.
+
+    `now` YEREL saat (gün kısıtı için), `now_utc` ise aralık hesabı için.
+    Gün kısıtı burada da geçerli: agent yalnızca Pazartesi/Perşembe
+    koşuyorsa, kırıldığında da yalnızca o günlerde yeniden denenmeli —
+    aksi halde haftada iki güne indirdiğimiz toplayıcı, arızalandığı anda
+    her gün koşan bir toplayıcıya dönüşürdü.
+    """
+    now_utc = now_utc or datetime.now(timezone.utc)
+    if now.weekday() not in WEEKDAYS:
+        return []
+    durumlar = llm_backoff.read_all()
+    due = []
+    for name, _, _ in SCHEDULE:
+        if now.weekday() not in allowed_weekdays(name):
+            continue
+        state = durumlar.get(_db_name(name))
+        if state is None:
+            continue
+        if llm_backoff.is_due(state, now_utc):
+            due.append(name)
+    return due
 
 
 def main() -> None:
@@ -294,12 +359,27 @@ def main() -> None:
         # Dakika başına bir kez: uyku kayması yüzünden aynı dakikada iki kez
         # tetiklenmeyi engeller.
         stamp = (now.hour, now.minute)
+        kosanlar: set[str] = set()
         if stamp != last_fired:
             for name in due_by_schedule(now):
                 if _shutdown.is_set():
                     break
                 _run(name, "schedule")
+                kosanlar.add(name)
             last_fired = stamp
+
+        # GERİ ÇEKİLME TURU — her turda bakılır (20 sn), çünkü 5 dakikalık
+        # aralık 30 dakikalık telafi turuna sığmaz. Sorgu ucuz: tek küçük
+        # tablo okuması, sırası gelen yoksa hiçbir şey yapılmaz.
+        for name in due_by_backoff(now, now_utc):
+            if _shutdown.is_set():
+                break
+            if name in kosanlar:
+                # Planlı saat ile geri çekilme sırası aynı ana denk geldi;
+                # aynı toplayıcıyı arka arkaya iki kez koşturmanın anlamı yok.
+                continue
+            _run(name, "backoff")
+            kosanlar.add(name)
 
         if now_utc >= next_catchup:
             stale = due_by_staleness(now_utc)
@@ -308,6 +388,8 @@ def main() -> None:
                 for name in stale:
                     if _shutdown.is_set():
                         break
+                    if name in kosanlar:
+                        continue
                     _run(name, "catchup")
             next_catchup = now_utc + timedelta(minutes=CATCHUP_INTERVAL_MINUTES)
 

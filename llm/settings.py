@@ -63,7 +63,13 @@ LLM_MAX_CALLS_PER_RUN = _int("LLM_MAX_CALLS_PER_RUN", 1)
 # sınırlı; agent toplayıcısı ise BANKA BAŞINA bir çağrı yapar ve tek çağrıyla
 # işini bitiremez. İkisini aynı sayaca bağlamak, agent'ı ilk bankadan sonra
 # susturur ve sessizce eksik veri üretirdi.
-LLM_AGENT_MAX_CALLS_PER_RUN = _int("LLM_AGENT_MAX_CALLS_PER_RUN", 8)
+# VARSAYILAN 8 DEĞİL 60: envanterde şu an 12 aktif agent sayfası var ve
+# toplayıcı banka BAŞINA bir çağrı yapıyor. 8'lik sınır, `.env` vermeden
+# kurulan her sistemde ilk sekiz bankayı çekip GERİSİNİ SESSİZCE atıyordu —
+# panelde hata da görünmüyordu, çünkü koşu "başarılı" sayılıyor. Sınırın
+# amacı kaçak token değil, kaçak DÖNGÜ engellemek; kaynak sayısının üstünde
+# bir değer bu amacı bozmuyor.
+LLM_AGENT_MAX_CALLS_PER_RUN = _int("LLM_AGENT_MAX_CALLS_PER_RUN", 60)
 
 # İstek zaman aşımı — asılı kalan bir çağrı hem koşuyu hem faturayı bekletir.
 LLM_TIMEOUT_SECONDS = _int("LLM_TIMEOUT_SECONDS", 45)
@@ -131,15 +137,28 @@ LLM_PRICE_INPUT_PER_1M = _float("LLM_PRICE_INPUT_PER_1M", None)
 LLM_PRICE_OUTPUT_PER_1M = _float("LLM_PRICE_OUTPUT_PER_1M", None)
 
 
-def estimate_cost_usd(prompt_tokens: int | None, completion_tokens: int | None) -> float | None:
-    """Fiyat tanımlı değilse None — 'bilinmiyor' ile 'sıfır' karıştırılmasın."""
-    if LLM_PRICE_INPUT_PER_1M is None and LLM_PRICE_OUTPUT_PER_1M is None:
+def estimate_cost_usd(
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    input_per_1m: float | None = None,
+    output_per_1m: float | None = None,
+) -> float | None:
+    """Fiyat tanımlı değilse None — 'bilinmiyor' ile 'sıfır' karıştırılmasın.
+
+    Birim fiyat artık panelden de girilebiliyor ve orası veritabanına
+    yazıyor (bkz. store/app_settings.py). Fonksiyon SAF tutuldu: fiyatı
+    kendisi aramıyor, çağıran veriyor; verilmezse `.env`'deki geçerli.
+    Böylece hem eski `.env` kurulumları hem panel aynı hesabı kullanıyor.
+    """
+    girdi = LLM_PRICE_INPUT_PER_1M if input_per_1m is None else input_per_1m
+    cikti = LLM_PRICE_OUTPUT_PER_1M if output_per_1m is None else output_per_1m
+    if girdi is None and cikti is None:
         return None
     cost = 0.0
-    if prompt_tokens and LLM_PRICE_INPUT_PER_1M is not None:
-        cost += prompt_tokens / 1_000_000 * LLM_PRICE_INPUT_PER_1M
-    if completion_tokens and LLM_PRICE_OUTPUT_PER_1M is not None:
-        cost += completion_tokens / 1_000_000 * LLM_PRICE_OUTPUT_PER_1M
+    if prompt_tokens and girdi is not None:
+        cost += prompt_tokens / 1_000_000 * girdi
+    if completion_tokens and cikti is not None:
+        cost += completion_tokens / 1_000_000 * cikti
     return cost
 
 
@@ -215,7 +234,7 @@ def reload_from_env(path: str | None = None) -> None:
         LLM_MAX_INPUT_CHARS=_int("LLM_MAX_INPUT_CHARS", 8_000),
         LLM_MAX_OUTPUT_TOKENS=_int("LLM_MAX_OUTPUT_TOKENS", 2_000),
         LLM_MAX_CALLS_PER_RUN=_int("LLM_MAX_CALLS_PER_RUN", 1),
-        LLM_AGENT_MAX_CALLS_PER_RUN=_int("LLM_AGENT_MAX_CALLS_PER_RUN", 8),
+        LLM_AGENT_MAX_CALLS_PER_RUN=_int("LLM_AGENT_MAX_CALLS_PER_RUN", 60),
         LLM_TIMEOUT_SECONDS=_int("LLM_TIMEOUT_SECONDS", 45),
         LLM_EXTRA_BODY=_json_obj("LLM_EXTRA_BODY", {}),
         LLM_PRICE_INPUT_PER_1M=_float("LLM_PRICE_INPUT_PER_1M", None),
@@ -255,10 +274,98 @@ def masked_key(key: str | None = None) -> str:
 
 _api_key_override: ContextVar[str | None] = ContextVar("llm_api_key_override", default=None)
 
+# ANAHTARIN YANINDA SAĞLAYICISI DA GEÇERSİZ KILINABİLMELİ.
+#
+# Eskiden yalnızca anahtar bağlama giriyordu; panelde girilen "Model" alanı
+# ise hiçbir yere gitmiyordu. Sonuç sessiz bir hataydı: kullanıcı kendi
+# OpenAI anahtarını girip "çalıştır" dediğinde istek `.env`'deki Gemini uç
+# noktasına gidiyor, anahtar oraya ait olmadığı için reddediliyordu — ve
+# ekranda görünen model adı hâlâ Gemini'ninkiydi. Anahtar sağlayıcısından
+# ayrılamaz: aynı anahtar Gemini'de geçerli, Qwen'de değil.
+_base_url_override: ContextVar[str | None] = ContextVar("llm_base_url_override", default=None)
+_model_override: ContextVar[str | None] = ContextVar("llm_model_override", default=None)
+_extra_body_override: ContextVar[dict | None] = ContextVar("llm_extra_body_override", default=None)
+
+#: Koşu boyunca kullanılan veritabanı kimliğinin id'si. Çağrı kimlik
+#: hatasıyla düşerse hangi satırın 'failed' işaretleneceğini bu söyler.
+_credential_id: ContextVar[int | None] = ContextVar("llm_credential_id", default=None)
+
+
+def _db_credential():
+    """Veritabanındaki en güncel kullanılabilir kimlik (yoksa None).
+
+    Gecikmeli import: `llm` -> `store` bağını modül yüklenme zamanına
+    taşımak döngüsel import üretir (store.observability zaten llm.settings
+    okuyor).
+    """
+    try:
+        from llm import credentials
+
+        return credentials.active()
+    except Exception as exc:  # noqa: BLE001 - veritabanı yoksa .env geçerli
+        logger.debug("veritabanı kimliği okunamadı: %s", exc)
+        return None
+
 
 def current_api_key() -> str:
-    """O anki bağlamda kullanılacak anahtar."""
-    return _api_key_override.get() or LLM_API_KEY
+    """O anki bağlamda kullanılacak anahtar.
+
+    SIRA: oturum (panelde girilen) -> veritabanı (kalıcı kaydedilen) ->
+    `.env`. Oturum en üstte çünkü ziyaretçinin kendi anahtarı yalnızca
+    kendi koşusunu beslemeli; `.env` en altta çünkü artık kalıcı kayıt
+    veritabanında tutuluyor.
+    """
+    oturum = _api_key_override.get()
+    if oturum:
+        return oturum
+    cred = _db_credential()
+    if cred and cred.api_key:
+        return cred.api_key
+    return LLM_API_KEY
+
+
+def current_base_url() -> str:
+    oturum = _base_url_override.get()
+    if oturum:
+        return oturum
+    if not _api_key_override.get():
+        cred = _db_credential()
+        if cred and cred.base_url:
+            return cred.base_url
+    return LLM_BASE_URL
+
+
+def current_model() -> str:
+    oturum = _model_override.get()
+    if oturum:
+        return oturum
+    if not _api_key_override.get():
+        cred = _db_credential()
+        if cred and cred.model:
+            return cred.model
+    return LLM_MODEL
+
+
+def current_extra_body() -> dict:
+    oturum = _extra_body_override.get()
+    if oturum is not None:
+        return oturum
+    if not _api_key_override.get():
+        cred = _db_credential()
+        if cred:
+            return cred.extra_body
+    return LLM_EXTRA_BODY
+
+
+def current_credential_id() -> int | None:
+    """Koşuda kullanılan veritabanı kimliğinin id'si (oturum anahtarında None)."""
+    acik = _credential_id.get()
+    if acik is not None:
+        return acik
+    if _api_key_override.get():
+        return None
+    cred = _db_credential()
+    return cred.id if cred else None
 
 
 def fallback_enabled() -> bool:
@@ -267,21 +374,65 @@ def fallback_enabled() -> bool:
     Bağlama bir anahtar konulmuşsa izin de vardır: kullanıcı kendi anahtarıyla
     açıkça "çalıştır" dedi. `LLM_FALLBACK_ENABLED` kazara token yakmaya karşı
     bir koruma; bilerek basılan bir düğmenin önüne konmasının anlamı yok.
+
+    Panelden KALICI olarak kaydedilen bir anahtar da aynı anlama geliyor:
+    kullanıcı anahtarı test ettirip "sürekli kullan" dedi. Bunu ayrıca
+    `.env`'de bir bayrağa bağlamak, panelden kaydetmeyi işlevsiz bırakırdı.
     """
-    return bool(_api_key_override.get()) or LLM_FALLBACK_ENABLED
+    if _api_key_override.get():
+        return True
+    if LLM_FALLBACK_ENABLED:
+        return True
+    return _db_credential() is not None
 
 
 @contextmanager
-def use_api_key(key: str):
-    """Yalnızca bu blok içinde geçerli anahtar.
+def use_api_key(
+    key: str,
+    *,
+    base_url: str | None = None,
+    model: str | None = None,
+    extra_body: dict | None = None,
+):
+    """Yalnızca bu blok içinde geçerli kimlik.
 
-    Blok içindeki her LLM çağrısı BU anahtarı kullanır ve `.env`'dekine
-    DÜŞMEZ — çıkarken bağlam eski haline döner.
+    Blok içindeki her LLM çağrısı BU anahtarı (ve verildiyse bu sağlayıcıyı)
+    kullanır, `.env`'dekine ya da veritabanındakine DÜŞMEZ — çıkarken bağlam
+    eski haline döner.
     """
     if not key or not key.strip():
         raise ValueError("boş anahtarla koşu bağlamı açılamaz")
-    token = _api_key_override.set(key.strip())
+    tokens = [(_api_key_override, _api_key_override.set(key.strip()))]
+    if base_url and base_url.strip():
+        tokens.append((_base_url_override, _base_url_override.set(base_url.strip())))
+    if model and model.strip():
+        tokens.append((_model_override, _model_override.set(model.strip())))
+    if extra_body is not None:
+        tokens.append((_extra_body_override, _extra_body_override.set(extra_body)))
     try:
         yield
     finally:
-        _api_key_override.reset(token)
+        for var, token in reversed(tokens):
+            var.reset(token)
+
+
+@contextmanager
+def use_credential(cred):
+    """Belirli bir veritabanı kimliğiyle koşmak — düşme (fallback) için.
+
+    `use_api_key`'ten farkı: kullanılan satırın id'si de bağlama giriyor,
+    böylece çağrı kimlik hatasıyla düşerse DOĞRU satır 'failed'
+    işaretlenebiliyor.
+    """
+    tokens = [
+        (_api_key_override, _api_key_override.set(cred.api_key)),
+        (_base_url_override, _base_url_override.set(cred.base_url)),
+        (_model_override, _model_override.set(cred.model)),
+        (_extra_body_override, _extra_body_override.set(cred.extra_body)),
+        (_credential_id, _credential_id.set(cred.id)),
+    ]
+    try:
+        yield
+    finally:
+        for var, token in reversed(tokens):
+            var.reset(token)
