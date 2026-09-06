@@ -36,6 +36,15 @@ logger = logging.getLogger(__name__)
 #: bir sonraki anahtara düşülür; diğer hatalarda düşülmez.
 KIMLIK_HATA_KODLARI = frozenset({401, 403, 429})
 
+#: `.env`'deki anahtarın birleşik zincirdeki sabit id'si. Veritabanı
+#: satırları 1'den başlayıp autoincrement olduğu için 0 hiç çakışmaz.
+#: `mark_failed(0, ...)` / `mark_ok(0, ...)` zaten var olmayan bir satırı
+#: arayıp sessizce hiçbir şey yapmaz (bkz. aşağıdaki iki fonksiyon) — bu
+#: bilinçli: `.env`'in kimlik hatası veritabanına YAZILMAZ, çünkü onu
+#: düzeltmenin tek yolu dosyayı değiştirip konteyneri yeniden başlatmak;
+#: kalıcı bir 'failed' damgası kullanıcı düzeltse bile hiç silinmezdi.
+ENV_CREDENTIAL_ID = 0
+
 
 @dataclass(frozen=True)
 class Credential:
@@ -75,8 +84,35 @@ def _to_credential(row: LlmCredential) -> Credential:
     )
 
 
+def env_credential() -> Credential | None:
+    """`.env`'deki anahtar, birleşik zincirde SABİT id=0 ile temsil edilir.
+
+    `llm.settings` modül globallerinden okunuyor (`LLM_API_KEY` vb.),
+    çünkü bu, panelden hiç dokunulmamış, sunucu sahibinin doğrudan
+    yapılandırdığı anahtardır — `LLM_API_KEY` içeriye ContextVar
+    kapsamasız, süreç geneli bir sabittir.
+    """
+    from llm import settings
+
+    if not settings.LLM_API_KEY:
+        return None
+    return Credential(
+        id=ENV_CREDENTIAL_ID,
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_BASE_URL,
+        model=settings.LLM_MODEL,
+        extra_body=dict(settings.LLM_EXTRA_BODY),
+        status="ok",
+    )
+
+
 def chain() -> list[Credential]:
-    """Denenecek anahtarlar — EN YENİ ÖNCE.
+    """Panelden kaydedilen anahtarlar — EN YENİ ÖNCE. `.env` DAHİL DEĞİL.
+
+    Bu liste yalnızca YÖNETİM ekranı için: "Kayıtlı anahtarlar" bölümü
+    kullanıcının panelden eklediği satırları listeler/siler. `.env`'deki
+    anahtar panelden eklenmedi, silinemez, bu yüzden burada görünmüyor —
+    onu `effective_chain()`'de ayrıca en başa ekleniyor.
 
     'failed' işaretliler listenin SONUNA atılır, atılmaz: anahtarın kotası
     ertesi gün yenilenebilir ve tek kullanılabilir anahtar oysa onu kalıcı
@@ -96,14 +132,34 @@ def chain() -> list[Credential]:
     return calisan + bozuk
 
 
+def effective_chain() -> list[Credential]:
+    """GERÇEKTE denenecek TAM sıra: `.env` ÖNCE, sonra panelden kaydedilenler.
+
+    NEDEN `.env` ÖNCE (kullanıcı kararı, 2026-09-06): `.env` sunucu
+    sahibinin kendi elleriyle girdiği, dışarıdan kimsenin dokunamadığı
+    anahtardır. Panelden "sürekli kullan" ile kaydedilen bir anahtar bunu
+    SESSİZCE geride bırakırsa, paneli görebilen biri (compose bugün
+    yalnızca 127.0.0.1'e bağlıyor ama bu değişebilir) sahibinin planlı
+    koşularını kendi anahtarına yönlendirmiş olurdu. `.env` boşsa panelden
+    kaydedilenler devreye girer; bu davranış değişmedi.
+
+    `.env`'in kendisi kimlik hatasıyla düşerse (bkz. llm/extract.py)
+    zincirdeki BİR SONRAKİ (panelden kaydedilen en yeni) anahtar denenir —
+    yani "en son kaydedilen kullanılsın, olmazsa bir öncekine düşsün"
+    isteği hâlâ geçerli, yalnızca `.env` artık o zincirin BAŞINDA.
+    """
+    onde = env_credential()
+    return ([onde] if onde else []) + chain()
+
+
 def active() -> Credential | None:
-    """Şu an kullanılacak anahtar (yoksa None -> .env'e düşülür)."""
-    zincir = chain()
+    """Şu an FİİLEN kullanılacak anahtar (yoksa None)."""
+    zincir = effective_chain()
     return zincir[0] if zincir else None
 
 
 def first_untried(tried: set[int]) -> Credential | None:
-    """Zincirde HENÜZ DENENMEMİŞ ilk anahtar.
+    """Zincirde HENÜZ DENENMEMİŞ ilk anahtar — `.env` dahil TÜM zincirde.
 
     NEDEN "sonraki" DEĞİL DE "denenmemiş": bir anahtar 'failed'
     işaretlendiği anda zincirin SONUNA kayıyor. Konuma göre "sonraki"yi
@@ -111,8 +167,12 @@ def first_untried(tried: set[int]) -> Credential | None:
     anahtarlı bir zincirde ilki düştüğünde ikinciyi hiç denemeden
     "yedek yok" diyordu. Denenmişleri kümede tutmak bunu yapısal olarak
     imkânsız kılıyor ve döngüyü de sınırlıyor: her anahtar en fazla bir kez.
+
+    `effective_chain()` KULLANILIYOR, `chain()` DEĞİL: `.env` kimlik
+    hatasıyla düşerse bir sonraki aday panelden kaydedilen en yeni anahtar
+    olmalı, yalnızca DB satırları arasında aranmamalı.
     """
-    for cred in chain():
+    for cred in effective_chain():
         if cred.id is not None and cred.id not in tried:
             return cred
     return None

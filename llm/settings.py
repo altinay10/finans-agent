@@ -292,7 +292,10 @@ _credential_id: ContextVar[int | None] = ContextVar("llm_credential_id", default
 
 
 def _db_credential():
-    """Veritabanındaki en güncel kullanılabilir kimlik (yoksa None).
+    """`.env` + panelden kaydedilenlerin BİRLEŞİK zincirinde en öndeki
+    kullanılabilir kimlik (yoksa None). Ad tarihseldir ('_db_credential'),
+    artık yalnızca veritabanını değil `.env`'i de kapsıyor — bkz.
+    `credentials.effective_chain()`.
 
     Gecikmeli import: `llm` -> `store` bağını modül yüklenme zamanına
     taşımak döngüsel import üretir (store.observability zaten llm.settings
@@ -303,7 +306,7 @@ def _db_credential():
 
         return credentials.active()
     except Exception as exc:  # noqa: BLE001 - veritabanı yoksa .env geçerli
-        logger.debug("veritabanı kimliği okunamadı: %s", exc)
+        logger.debug("kimlik zinciri okunamadı: %s", exc)
         return None
 
 

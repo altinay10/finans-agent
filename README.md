@@ -39,10 +39,21 @@ konteynerinin yazacağı dosyayı her yeniden kurulumda silerdi. Veritabanı ise
 `finans-data` volume'ünde ve iki konteyner de aynı dosyayı açıyor.
 
 **Anahtar kaydedilmeden önce canlı test edilir** (en küçük istek, `max_tokens=1`);
-çalışmayan anahtar kaydedilmez. Birden fazla anahtar tutulabilir: **en son
-kaydedilen** kullanılır, o kimlik hatası verirse (kota doldu, iptal edildi)
-otomatik olarak bir öncekine düşülür. Anahtarın sağlayıcısı da (taban URL,
-model, ek gövde alanları) anahtarla birlikte saklanır — aynı anahtar Gemini'de
+çalışmayan anahtar kaydedilmez. Öncelik sırası:
+
+1. **`.env`'deki anahtar** — sunucu sahibinin doğrudan yapılandırdığı,
+   panelden hiç dokunulamayan anahtar. **Tanımlıysa her zaman önce o
+   denenir**, panelden sonradan kaydedilen bir anahtar bile onu geride
+   bırakmaz.
+2. **Panelden kaydedilenler**, en yeniden eskiye. `.env` boşsa doğrudan
+   bunlar kullanılır; `.env` doluysa yalnızca ONUN kimlik hatasıyla
+   (401/403/429 — kota doldu, iptal edildi) düşmesi durumunda sırayla
+   devreye girerler.
+
+Zaman aşımı ve sağlayıcının kendi 500 hatası düşürmez — sağlam bir
+anahtarı boşuna suçlayıp zincirin sonuna atmamak için. Anahtarın
+sağlayıcısı da (taban URL, model, ek gövde alanları) anahtarla birlikte
+saklanır — aynı anahtar Gemini'de
 geçerli, Qwen'de değil.
 
 **"Şimdi tazele" sunucunun anahtarını harcayamaz.** Aksi halde paneli açan

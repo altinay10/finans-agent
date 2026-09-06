@@ -87,6 +87,69 @@ def test_the_key_is_never_returned_in_full(db):
     assert "cok-gizli" not in cred.masked
 
 
+# ------------------------------------------- .env HER ZAMAN ÖNCELİKLİ ----
+#
+# Kullanıcı kararı (2026-09-06): panelden kaydedilen bir anahtar `.env`'i
+# SESSİZCE geride bırakmamalı. `.env` sunucu sahibinin doğrudan
+# yapılandırdığı, panelden hiç dokunulamayan anahtardır; DB'ye kaydedilen
+# anahtarlar yalnızca `.env` kimlik hatasıyla düşerse devreye giren yedek.
+
+
+def test_env_key_is_used_even_when_a_newer_one_is_saved(db, monkeypatch):
+    """REGRESYON: panelden kaydedilen 'en yeni' anahtar .env'i geçmemeli."""
+    monkeypatch.setattr(settings, "LLM_API_KEY", "env-anahtari-1111")
+    monkeypatch.setattr(settings, "LLM_MODEL", "gemini-3.5-flash-lite")
+    monkeypatch.setattr(
+        settings, "LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    _kaydet("panelden-2222")  # daha yeni, ama .env yine de kazanmalı
+
+    assert settings.current_api_key() == "env-anahtari-1111"
+    assert settings.current_model() == "gemini-3.5-flash-lite"
+    assert credentials.active().id == credentials.ENV_CREDENTIAL_ID
+
+
+def test_saved_keys_are_used_when_env_is_empty(db, monkeypatch):
+    """.env boşsa eski davranış geçerli: panelden kaydedilen kullanılır."""
+    monkeypatch.setattr(settings, "LLM_API_KEY", "")
+    cred = _kaydet("panelden-3333")
+    assert settings.current_api_key() == "panelden-3333"
+    assert credentials.active().id == cred.id
+
+
+def test_env_falls_through_to_the_saved_chain_on_a_credential_error(db, monkeypatch):
+    """.env kimlik hatasıyla düşerse SIRADAKİ (panelden kaydedilen en yeni)
+    anahtar denenmeli — 'otomatik düşme' isteği .env'i de kapsıyor."""
+    monkeypatch.setattr(settings, "LLM_API_KEY", "bozuk-env-anahtari")
+    yedek = _kaydet("saglam-yedek-4444")
+
+    denenen: set[int] = set()
+    ilk = credentials.first_untried(denenen)
+    assert ilk.id == credentials.ENV_CREDENTIAL_ID
+    denenen.add(ilk.id)
+
+    ikinci = credentials.first_untried(denenen)
+    assert ikinci.id == yedek.id
+
+
+def test_marking_the_env_credential_failed_is_a_safe_no_op(db, monkeypatch):
+    """`.env`'in kimlik hatası veritabanına YAZILMAZ — düzeltmenin tek yolu
+    dosyayı değiştirip yeniden başlatmak; kalıcı bir damga hiç silinmezdi."""
+    monkeypatch.setattr(settings, "LLM_API_KEY", "bozuk-env-anahtari")
+    credentials.mark_failed(credentials.ENV_CREDENTIAL_ID, "401 invalid")  # patlamamalı
+    # .env hâlâ birleşik zincirin başında — kalıcı olarak dışlanmadı.
+    assert credentials.active().id == credentials.ENV_CREDENTIAL_ID
+
+
+def test_the_saved_chain_management_list_never_shows_the_env_key(db, monkeypatch):
+    """`chain()` (yönetim listesi) .env'i İÇERMEZ — silinebilir gibi görünüp
+    silinemeyen bir satır kafa karıştırırdı."""
+    monkeypatch.setattr(settings, "LLM_API_KEY", "env-anahtari-1111")
+    _kaydet("panelden-5555")
+    assert all(c.id != credentials.ENV_CREDENTIAL_ID for c in credentials.chain())
+    assert credentials.effective_chain()[0].id == credentials.ENV_CREDENTIAL_ID
+
+
 # --------------------------------------------- oturum > veritabanı > env --
 
 

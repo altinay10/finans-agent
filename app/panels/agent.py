@@ -83,9 +83,16 @@ def key_source() -> str:
     settings.reload_from_env()
     if session_key():
         return "oturum"
-    if credentials.active() is not None:
+    # .ENV ÖNCE KONTROL EDİLİYOR (kullanıcı kararı, 2026-09-06): birleşik
+    # zincirde `.env` her zaman baştadır (bkz. credentials.effective_chain).
+    # `credentials.active()` artık .env varken onu döndürür; burada AYRICA
+    # doğrudan `settings.LLM_API_KEY`e bakmak, ekranda "kayıtlı" değil
+    # doğru kaynağı (".env") göstermek için gerekli.
+    if settings.LLM_API_KEY:
+        return ".env"
+    if credentials.chain():
         return "kayıtlı"
-    return ".env" if settings.LLM_API_KEY else "yok"
+    return "yok"
 
 
 def run_agent(key: str | None):
@@ -175,12 +182,26 @@ def _render_state(kaynak: str) -> None:
             "bağlı banka sayfaları planlı koşularda güncellenmiyor.\n\n"
             "Ücretsiz anahtar: https://aistudio.google.com/apikey"
         )
+    elif kaynak == ".env":
+        yedek_sayisi = len(credentials.chain())
+        yedek_notu = (
+            f" **{yedek_sayisi} kayıtlı yedek anahtar** bekliyor; `.env`'deki "
+            "kimlik hatasıyla düşerse otomatik olarak sıradakine geçilir."
+            if yedek_sayisi else ""
+        )
+        st.success(
+            f"**`.env`'deki anahtar** kullanılıyor (model `{settings.LLM_MODEL}`). "
+            "Panelden kaydedilen bir anahtar varsa bile `.env` ÖNCELİKLİDİR — "
+            "sunucu sahibinin doğrudan yapılandırdığı anahtar, panelden hiç "
+            f"dokunulmamıştır.{yedek_notu}"
+        )
     elif kaynak == "kayıtlı":
         aktif = credentials.active()
         st.success(
-            f"Kayıtlı anahtar kullanılıyor (**{aktif.masked}**, model "
-            f"`{aktif.model}`). Veritabanında tutuluyor, yani **zamanlayıcı da "
-            "aynı anahtarı görüyor** ve konteyner yeniden kurulunca kaybolmuyor."
+            f"Panelden kaydedilen anahtar kullanılıyor (**{aktif.masked}**, "
+            f"model `{aktif.model}`) — `.env`'de anahtar tanımlı değil. "
+            "Veritabanında tutuluyor, yani **zamanlayıcı da aynı anahtarı "
+            "görüyor** ve konteyner yeniden kurulunca kaybolmuyor."
         )
     elif kaynak == "oturum":
         st.info(
@@ -190,7 +211,7 @@ def _render_state(kaynak: str) -> None:
         )
         # Geri dönüş yolu olmadan, yanlış anahtar giren kullanıcı tarayıcıyı
         # kapatana kadar sıkışıp kalıyordu.
-        if st.button("Oturumluk anahtarı kaldır", help="`.env`'deki anahtara geri dön"):
+        if st.button("Oturumluk anahtarı kaldır", help="Kalıcı kimliğe (varsa .env, yoksa kayıtlı anahtar) geri dön"):
             st.session_state.pop(SESSION_KEY, None)
             settings.reload_from_env()
             st.rerun()
@@ -293,13 +314,24 @@ def _render_key_form(kaynak: str) -> None:
         # eskisi kullanılıyor" durumuna düşerdi.
         for anahtar_adi in (SESSION_KEY, SESSION_BASE_URL, SESSION_MODEL, SESSION_EXTRA_BODY):
             st.session_state.pop(anahtar_adi, None)
-        st.success(
-            f"**Test edildi ve kaydedildi** ({cred.masked}, `{cred.model}`). "
-            "Veritabanında tutuluyor: zamanlayıcı bir sonraki koşusunda "
-            "kullanacak, konteyner yeniden kurulsa da kaybolmayacak. "
-            "En son kaydedilen anahtar kullanılır; kullanılamaz hale gelirse "
-            "bir öncekine düşülür."
-        )
+        if settings.LLM_API_KEY:
+            # .ENV DOLUYKEN bu anahtar HEMEN devreye girmez — yedek olarak
+            # sıraya girer. Bunu söylemezsek kullanıcı "kaydettim, neden hâlâ
+            # eski model kullanılıyor" diye şaşırırdı.
+            st.success(
+                f"**Test edildi ve kaydedildi** ({cred.masked}, `{cred.model}`) — "
+                "**yedek olarak.** `.env`'de bir anahtar tanımlı olduğu için "
+                "planlı koşular hâlâ ONU kullanıyor; bu anahtar yalnızca `.env`'in "
+                "kimlik hatasıyla düşmesi durumunda devreye girer."
+            )
+        else:
+            st.success(
+                f"**Test edildi ve kaydedildi** ({cred.masked}, `{cred.model}`). "
+                "Veritabanında tutuluyor: zamanlayıcı bir sonraki koşusunda "
+                "kullanacak, konteyner yeniden kurulsa da kaybolmayacak. "
+                "En son kaydedilen anahtar kullanılır; kullanılamaz hale gelirse "
+                "bir öncekine düşülür."
+            )
     else:
         # SÜREÇ GENELİNE YAZILMIYOR: modül globali tüm tarayıcı oturumlarınca
         # paylaşılıyor ve zamanlayıcının planlı koşuları da onu okurdu.
@@ -317,22 +349,36 @@ def _render_key_form(kaynak: str) -> None:
 
 
 def _render_saved_keys() -> None:
-    """Kayıtlı anahtarlar — hangisi kullanılıyor, hangisi düştü."""
+    """Kayıtlı anahtarlar — hangisi kullanılıyor, hangisi yedek, hangisi düştü."""
     kayitlilar = credentials.listele()
     if not kayitlilar:
         return
+    # .ENV VARKEN HİÇBİR DB SATIRI FİİLEN KULLANILMIYOR — birleşik zincirde
+    # `.env` her zaman baştadır. Rozeti buna göre çizmezsek liste "üstteki
+    # kullanılıyor" derken .env zaten onu geride bırakmış olurdu.
+    env_oncelikli = bool(settings.LLM_API_KEY)
     with st.expander(f"Kayıtlı anahtarlar ({len(kayitlilar)})", expanded=False):
-        st.caption(
-            "**En üstteki kullanılır.** Bir anahtar kimlik hatası verirse "
-            "(kota doldu, iptal edildi) otomatik olarak `düştü` işaretlenir ve "
-            "sıradakine geçilir. Kotası yenilenirse ilk başarılı koşuda tekrar "
-            "`çalışıyor` olur — bu yüzden düşen anahtar silinmiyor, sona atılıyor."
-        )
+        if env_oncelikli:
+            st.caption(
+                "**`.env`'deki anahtar öncelikli** — buradakiler yalnızca o "
+                "kimlik hatasıyla düşerse sırayla devreye girer. `.env` boşsa "
+                "en üstteki doğrudan kullanılır."
+            )
+        else:
+            st.caption(
+                "**En üstteki kullanılır.** Bir anahtar kimlik hatası verirse "
+                "(kota doldu, iptal edildi) otomatik olarak `düştü` işaretlenir ve "
+                "sıradakine geçilir. Kotası yenilenirse ilk başarılı koşuda tekrar "
+                "`çalışıyor` olur — bu yüzden düşen anahtar silinmiyor, sona atılıyor."
+            )
         for index, cred in enumerate(kayitlilar):
             c1, c2, c3, c4 = st.columns([2, 3, 2, 1])
-            etiket = "🟢 kullanılıyor" if index == 0 else "⚪ yedek"
             if cred.status == "failed":
                 etiket = "🔴 düştü"
+            elif index == 0 and not env_oncelikli:
+                etiket = "🟢 kullanılıyor"
+            else:
+                etiket = "⚪ yedek"
             c1.write(f"{etiket} · **{cred.masked}**")
             c2.write(f"`{cred.model}`")
             c3.caption(cred.base_url.replace("https://", "")[:28])
