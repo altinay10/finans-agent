@@ -21,7 +21,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from app.panels.common import fetched_caption, institution_label
+from app.panels.common import fetched_caption, institution_label, principal_input
 from config.loader import loan_coverage, resolve_loan_taxes, source_summary
 from core.loan import amortize, annual_cost_rate, compare_installment
 from core.models import LoanInput
@@ -55,8 +55,41 @@ def _coverage() -> dict[str, dict]:
     return loan_coverage()
 
 
-def render(principal: float) -> None:
+@st.cache_data(ttl=300)
+def _campaign_count(loan_type: str) -> int:
+    return queries.loan_campaign_count(loan_type)
+
+
+#: Kampanyalı satırın rozeti. Metinde de, etikette de aynı işaret.
+CAMPAIGN_MARK = "🏷️"
+
+
+def _row_label(row: dict) -> str:
+    """Tablo ve seçici için satır etiketi; kampanyalıysa rozetli."""
+    name = institution_label(row["institution"])
+    return f"{name} {CAMPAIGN_MARK}" if row.get("is_campaign") else name
+
+
+def _audience_text(row: dict) -> str:
+    """Bu oran kime açık — tek bakışta okunacak kadar kısa.
+
+    Gerekçe modelin kendi cümlesi (`campaign_note`) ve uzun olabiliyor;
+    tabloda kırpılıyor, tamamı koşu kaydında duruyor. Gerekçe hiç yoksa
+    "kampanya" demek yine de doğru bilgi: satırın kampanyalı olduğunu
+    biliyoruz, yalnızca sebebini bilmiyoruz.
+    """
+    if not row.get("is_campaign"):
+        return "Herkese açık"
+    note = (row.get("campaign_note") or "").strip()
+    return f"{CAMPAIGN_MARK} {note[:60]}" if note else f"{CAMPAIGN_MARK} Koşullu (gerekçe yok)"
+
+
+def render() -> None:
     st.subheader("Kredi")
+    # Kredi sekmesi tutarı her koşulda TL sayar; kutu birimsiz olduğu için
+    # birimi burada söylüyoruz (bkz. app/panels/common.principal_input).
+    principal = principal_input("kredi")
+    st.caption("Çekilecek kredi tutarı **TL** kabul edilir.")
     col1, col2 = st.columns(2)
     with col1:
         loan_type = st.selectbox(

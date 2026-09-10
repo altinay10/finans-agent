@@ -621,3 +621,84 @@ def test_daily_coverage_flags_a_sparse_series_but_not_a_daily_one():
     assert _daily_coverage(ykp) < 0.5, "seyrek uzak geçmiş uyarıyı tetiklemeli"
     assert _daily_coverage([]) is None
     assert _daily_coverage([(son, 1.0)]) is None
+
+
+# ------------------------------------------------------- anapara kutusu ----
+
+
+def test_principal_input_label_has_no_currency_unit():
+    """Etiket birimsiz kalmalı.
+
+    Kilitlenen şey gerçek: etiket seçilen para birimine bağlanamaz, çünkü
+    tutar bütün sekmelerde ORTAK ve Kredi ile Fon sekmeleri onu her koşulda
+    TL sayıyor; para birimi seçicisi yalnızca Mevduat sekmesinin içinde
+    (bkz. app/panels/deposit.py).
+    """
+    from app.panels.common import PRINCIPAL_LABEL
+
+    assert PRINCIPAL_LABEL == "Anapara"
+
+
+def test_principal_boxes_share_one_amount(monkeypatch):
+    """Bir sekmede girilen tutar diğer sekmelerin kutusuna da yansır.
+
+    Sekmeler ayrı `key` taşımak zorunda (Streamlit hepsini aynı
+    çalıştırmada render eder), bu yüzden ortaklık kanonik tutar üzerinden
+    kuruluyor. Test o zinciri taklit ediyor: Döviz kutusuna ham "2500000"
+    yazılıyor, sonra Mevduat kutusu çiziliyor ve orada ayrılmış gösterimi
+    okuması bekleniyor.
+    """
+    from app.panels import common
+
+    class _SahteStreamlit:
+        def __init__(self):
+            self.session_state = {}
+            self.cizilen = []
+
+        def text_input(self, label, key=None, on_change=None, args=()):
+            self.cizilen.append((label, key, self.session_state[key]))
+
+    sahte = _SahteStreamlit()
+    monkeypatch.setattr(common, "st", sahte)
+
+    assert common.principal_input("doviz") == common.DEFAULT_PRINCIPAL
+
+    # Kullanıcı Döviz kutusuna ayırıcısız yazıyor; kutunun on_change'i budur.
+    sahte.session_state["anapara_doviz"] = "2500000"
+    common._principal_changed("anapara_doviz")
+
+    assert common.principal_input("mevduat") == 2_500_000
+    assert sahte.cizilen[-1] == ("Anapara", "anapara_mevduat", "2,500,000")
+    # Aynı çalıştırmada Döviz kutusu da kanonik gösterime dönüyor.
+    common.principal_input("doviz")
+    assert sahte.session_state["anapara_doviz"] == "2,500,000"
+
+
+def test_principal_input_keeps_last_amount_when_box_emptied():
+    """Kutu boşaltılırsa tutar sıfıra düşmez, son geçerli değer kalır.
+
+    Sessizce sıfıra düşmek bütün sekmelerin hesabını fark edilmeden
+    bozardı; boş kutu bir tutar değil, yarım kalmış bir düzenlemedir.
+    """
+    from app.panels import common
+
+    class _SahteStreamlit:
+        def __init__(self):
+            self.session_state = {}
+
+        def text_input(self, label, key=None, on_change=None, args=()):
+            pass
+
+    import pytest as _pytest
+
+    sahte = _SahteStreamlit()
+    with _pytest.MonkeyPatch.context() as mp:
+        mp.setattr(common, "st", sahte)
+        common.principal_input("kredi")
+        sahte.session_state["anapara_kredi"] = "750000"
+        common._principal_changed("anapara_kredi")
+        sahte.session_state["anapara_kredi"] = "   "
+        common._principal_changed("anapara_kredi")
+        assert common.principal_input("kredi") == 750_000
+
+

@@ -12,6 +12,8 @@ import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+import streamlit as st
+
 ISTANBUL = ZoneInfo("Europe/Istanbul")
 
 
@@ -201,3 +203,89 @@ def parse_amount(raw: str) -> int | None:
     """
     digits = re.sub(r"\D", "", raw or "")
     return int(digits) if digits else None
+
+
+# --- anapara kutusu ---------------------------------------------------------
+#
+# KUTU ARTIK SEKMELERİN İÇİNDE. Eskiden `app/main.py`'de, sekmelerin
+# ÜSTÜNDE tek bir kutu vardı ve Agent/Kaynaklar/Kayıtlar sekmelerinde de
+# görünüyordu — o üç sekmenin tutarla hiçbir işi yok. Kutu, onu gerçekten
+# kullanan dört sekmeye (Döviz, Mevduat, Kredi, Fon) taşındı.
+#
+# DEĞER ORTAK, KUTULAR AYRI. Streamlit bütün sekmeleri her çalıştırmada
+# render eder; aynı `key` ile dört kutu çakışırdı. Bu yüzden her sekmenin
+# kendi anahtarı var (`anapara_doviz`, `anapara_mevduat`, ...) ama hepsi
+# tek bir kanonik tutarı (`anapara_gecerli`) okuyup yazıyor: bir sekmede
+# yazılan tutar diğerlerinde de görünür, sekme değiştirince tutar
+# sıfırlanmaz.
+
+DEFAULT_PRINCIPAL = 1_000_000
+
+#: Kanonik tutarın session_state anahtarı. Kutuların kendi anahtarları
+#: yalnızca metin taşır; hesaplarda her zaman bu tam sayı kullanılır.
+PRINCIPAL_STATE = "anapara_gecerli"
+
+# ETİKET BİRİMSİZ. Eskiden "Anapara (TL)" yazıyordu ve Mevduat sekmesinde
+# para birimi USD/EUR seçildiğinde tutarsızlık doğuyordu: sekmenin kendi
+# açıklaması "bu tutarı USD kabul eder" derken kutu hâlâ "(TL)" diyordu
+# (inceleme, 2026-09-08). Kutu sekmelere taşındıktan sonra da birimsiz
+# kaldı: değer sekmeler arasında ORTAK, yani Mevduat'ta USD seçilince
+# yazılan sayı Kredi ve Fon sekmelerinde TL olarak okunmaya devam ediyor.
+# Birimi kutunun etiketine yazmak, tutarı başka birimde okuyan sekmeleri
+# yanlış etiketlerdi; birimi bilen sekme onu kendi açıklamasında söylüyor.
+PRINCIPAL_LABEL = "Anapara"
+
+
+def principal_style() -> str:
+    """Anapara kutularının biçim kuralı; `app/main.py` bir kez basar.
+
+    Varsayılan 14 puntoda yedi haneli tutar zor seçiliyordu; kutu büyütülüp
+    rakamlar irileştiriliyor. Seçici yalnızca anapara kutularına bağlı
+    (`st-key-anapara...`); genel bir `input` seçicisi diğer panellerin form
+    alanlarını da bozardı. `class*=` gerekiyor çünkü her sekmenin kutusu
+    ayrı bir anahtar, dolayısıyla ayrı bir sınıf taşıyor.
+    """
+    return """
+    <style>
+    [class*="st-key-anapara"] input {
+        font-size: 1.5rem;
+        height: 3.25rem;
+    }
+    [class*="st-key-anapara"] label p { font-size: 1rem; }
+    </style>
+    """
+
+
+def principal_amount() -> int:
+    """Kutuya bakmadan, o an geçerli olan tutar."""
+    return int(st.session_state.get(PRINCIPAL_STATE, DEFAULT_PRINCIPAL))
+
+
+def _principal_changed(key: str) -> None:
+    """Kutu her değiştiğinde kanonik tutarı tazeler.
+
+    İçinde hiç rakam yoksa son geçerli tutara dönülür; sessizce sıfıra
+    düşmek bütün sekmelerin hesabını fark edilmeden bozardı. Kutunun kendi
+    metnini burada düzeltmeye gerek yok: bir sonraki çalıştırmada
+    `principal_input` bütün kutulara kanonik gösterimi yazıyor, böylece
+    kullanıcı "2500000" yazsa da her sekmede "2,500,000" görüyor.
+    """
+    parsed = parse_amount(st.session_state.get(key, ""))
+    if parsed is None:
+        parsed = principal_amount()
+    st.session_state[PRINCIPAL_STATE] = parsed
+
+
+def principal_input(slot: str) -> int:
+    """Sekmenin kendi anapara kutusunu çizer ve geçerli tutarı döndürür.
+
+    `slot`, sekmeyi ayıran ektir ("doviz", "mevduat", ...). Tutar ortaktır.
+    """
+    key = f"anapara_{slot}"
+    tutar = principal_amount()
+    st.session_state[PRINCIPAL_STATE] = tutar
+    # Kutunun metni her çalıştırmada kanonik tutardan yeniden yazılıyor;
+    # başka bir sekmede girilen tutarın buraya da yansımasının yolu bu.
+    st.session_state[key] = format_amount(tutar)
+    st.text_input(PRINCIPAL_LABEL, key=key, on_change=_principal_changed, args=(key,))
+    return principal_amount()

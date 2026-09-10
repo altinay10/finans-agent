@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from app.panels.common import fetched_caption
+from app.panels.common import fetched_caption, principal_input
 from config.loader import resolve_deposit_brackets, resolve_fund_withholding
 from core.deposit import resolve_withholding, rollover_return
 from core.fund import nearest_prior_price, simulate
@@ -78,30 +78,23 @@ def _deposit_comparison(principal: float, horizon_days: int) -> tuple[float, str
     return best_return, best_institution
 
 
-def render(principal: float) -> None:
-    st.subheader("Fon Simülasyonu")
-    funds = _funds()
-    if not funds:
-        st.info("Fon kataloğu boş — `config/funds.yaml` dosyasını kontrol et.")
-        _render_add_fund()
-        return
+def _scenario_rows(
+    prices: list[tuple[date, float]],
+    price_end_date: date,
+    price_end: float,
+    principal: float,
+    withholding: float,
+    is_equity_heavy: bool,
+) -> tuple[list[dict], set[str]]:
+    """Senaryo tablosunun satırları — Streamlit'siz, saf.
 
-    fund = st.selectbox("Fon", funds, format_func=lambda f: f"{f['code']} — {f['name']}")
-    today = date.today()
-    prices = _price_series(fund["code"], today - timedelta(days=400), today)
-
-    if not prices:
-        st.info(
-            f"{fund['code']} için son 400 günde fiyat verisi yok. Fiyatlar sağlayıcı "
-            "adaptörlerinden toplanır: `python worker.py funds`"
-        )
-        _render_add_fund()
-        return
-
-    withholding = resolve_fund_withholding(fund["is_equity_heavy"])
-    price_end_date, price_end = max(prices, key=lambda p: p[0])
-
-    rows = []
+    `render`'ın içinden AYRILDI ki sütun başlıkları test edilebilsin.
+    Başlıklardaki birim bir gösterim ayrıntısı değil, doğruluk meselesi:
+    birimsiz bir "Brüt getiri" sütunu yüzde olarak okunabiliyor ve tabloda
+    yazan sayı bir TUTAR. Bunu kilitleyen testin `render` çağırması
+    gerekmesin diye satır üretimi buraya taşındı.
+    """
+    rows: list[dict] = []
     comparison_sources: set[str] = set()
     for label, days_back in SCENARIOS:
         target = price_end_date - timedelta(days=days_back)
@@ -117,7 +110,7 @@ def render(principal: float) -> None:
                 date_start=price_start_date,
                 date_end=price_end_date,
                 withholding_rate=withholding,
-                is_equity_heavy=fund["is_equity_heavy"],
+                is_equity_heavy=is_equity_heavy,
             )
         )
         comparison = _deposit_comparison(principal, days_back)

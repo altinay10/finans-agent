@@ -21,7 +21,7 @@ from collections import defaultdict
 import pandas as pd
 import streamlit as st
 
-from app.panels.common import fetched_caption, institution_label
+from app.panels.common import fetched_caption, institution_label, principal_input
 from config.loader import source_summary
 from config.loader import resolve_deposit_brackets
 from core.deposit import DepositInput, resolve_withholding, single_term_return
@@ -111,13 +111,14 @@ def _render_profit_shares(principal: float, currency: str) -> None:
 
 
 
-def render(principal: float) -> None:
+def render() -> None:
     st.subheader("Mevduat & Kar Payı")
+    principal = principal_input("mevduat")
     currency = st.selectbox("Para birimi", ["TRY", "USD", "EUR"], key="deposit_currency")
 
-    # Üstteki girdi "Anapara (TL)" diye etiketli; TRY dışı bir para birimi
-    # seçildiğinde aynı sayı o para biriminin tutarı olarak yorumlanıyor.
-    # Kullanıcının bunu yanlış anlamaması için açıkça yaz.
+    # "Anapara" kutusu birimsizdir (bkz. app/panels/common.PRINCIPAL_LABEL);
+    # TRY dışı bir para birimi seçildiğinde aynı sayı o para biriminin
+    # tutarı olarak yorumlanıyor. Birimi bilen tek yer burası, açıkça yaz.
     if currency != "TRY":
         st.caption(
             f"Hesaplama, girilen **{principal:,.0f}** tutarını **{currency}** cinsinden kabul eder "
