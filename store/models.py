@@ -418,29 +418,14 @@ class LlmCredential(Base):
     last_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
-    #: SİLME KODUNUN SHA-256 ÖZETİ. Kodun kendisi burada DURMAZ.
-    #
-    # NEDEN VAR: panelde kimlik doğrulama yok ve "Sil" düğmesi herkese
-    # açıktı; paneli açabilen biri bütün anahtarları silip agent'ı tamamen
-    # durdurabiliyordu (kullanıcı bildirimi, 2026-09-12).
-    #
-    # NEDEN ÇEREZ DEĞİL: çerez istemcide duruyor ve istemci onu kendi
-    # yazabilir. "Ben sahibim" diyen bir çerez, kötü niyetli birini
-    # engellemez — yalnızca kazara silmeyi engeller. Burada tutulan şey bir
-    # TAŞIYICI JETON özeti: anahtarı kaydeden kişiye rastgele bir kod
-    # gösteriliyor, sunucu yalnızca özetini saklıyor, silmek için o kodu
-    # sunmak gerekiyor. Kodu olmayan kimse o satırı silemez ve kod
-    # sunucudan geri okunamaz.
-    #
-    # NULL = ESKİ SATIR. Bu sütun eklenmeden önce kaydedilmiş anahtarların
-    # sahibi bilinmiyor; onlar için kod sorulmuyor (aksi halde kimse
-    # silemezdi). Yeni kayıtların hepsi kod taşır.
-    #
-    # SINIR — BUNUN ÇÖZMEDİĞİ ŞEY: bu, panelin önüne kimlik doğrulama
-    # koymanın YERİNE GEÇMEZ. Paneli açabilen biri hâlâ anahtar EKLEYEBİLİR
-    # ve agent'ı çalıştırıp token harcatabilir. Gerçek koruma ters vekil +
-    # kimlik doğrulamadır (bkz. docker-compose.yml'deki port notu).
-    owner_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    # NOT: bir dönem `owner_hash` sütunu vardı ("yalnızca ekleyen silebilir").
+    # Kural KALDIRILDI: kendisinden önce kaydedilmiş satırlara muafiyet
+    # tanıyordu ve canlıdaki tek anahtar tam olarak öyle bir satır olduğu
+    # için kodsuz silindi (2026-09-13). Artık silme panelde HİÇ yok, yalnızca
+    # sunucudaki `worker.py keys rm` yapıyor — yetkilendirecek bir şey
+    # kalmadığı için sütun da okunmuyor. Var olan veritabanlarında sütun
+    # duruyor (migrate sütun silmez, bkz. store/migrate.py) ama boş ve
+    # kimse ona bakmıyor.
 
 
 class LlmFallbackState(Base):

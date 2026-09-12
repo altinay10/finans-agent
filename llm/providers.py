@@ -26,6 +26,14 @@ from dataclasses import dataclass, field
 CUSTOM = "Diğer / elle"
 
 
+#: Fiyatı bilinmeyen sağlayıcı için kutuya konan başlangıç değeri
+#: (USD / 1M token). Uydurma bir sayı DEĞİL, "sen doldur" demenin bir
+#: biçimi: 0 yazmak "bedava" anlamına gelirdi ve maliyet sütununu sessizce
+#: yanlışlardı.
+VARSAYILAN_GIRDI = 1.0
+VARSAYILAN_CIKTI = 5.0
+
+
 @dataclass(frozen=True)
 class Provider:
     label: str
@@ -33,6 +41,12 @@ class Provider:
     model: str
     extra_body: dict = field(default_factory=dict)
     note: str = ""
+    #: USD / 1.000.000 token. None = bu sağlayıcının güncel fiyatını
+    #: BİLMİYORUZ; kutu genel varsayılanla açılır ve kullanıcı düzeltir.
+    #: Yanlış bir fiyat yazmak, fiyat yazmamaktan kötüdür — maliyet
+    #: sütunu doğru görünürken yanlış olur.
+    price_in: float | None = None
+    price_out: float | None = None
 
 
 PROVIDERS: tuple[Provider, ...] = (
@@ -46,6 +60,9 @@ PROVIDERS: tuple[Provider, ...] = (
             "buraya Qwen'in `enable_thinking` alanını bırakırsan istek "
             "reddedilir."
         ),
+        # gemini-3.5-flash-lite listesi (kullanıcı bildirimi, 2026-09-13).
+        price_in=0.30,
+        price_out=2.50,
     ),
     Provider(
         label="OpenAI (ChatGPT)",
@@ -99,6 +116,21 @@ PROVIDERS: tuple[Provider, ...] = (
 LABELS: tuple[str, ...] = tuple(p.label for p in PROVIDERS)
 
 _BY_LABEL = {p.label: p for p in PROVIDERS}
+
+
+def prices(label: str) -> tuple[float, float]:
+    """Sağlayıcının (girdi, çıktı) fiyatı; bilinmiyorsa genel varsayılan.
+
+    Yalnızca Gemini'nin fiyatı elde (kullanıcı verdi). Diğerleri için
+    sağlayıcıların güncel liste fiyatını doğrulayamadığımız için genel
+    varsayılan konuyor ve kullanıcıdan düzeltmesi isteniyor — yanlış bir
+    sayı, maliyet sütununu "doğru görünen yanlış"a çevirirdi.
+    """
+    p = by_label(label)
+    return (
+        VARSAYILAN_GIRDI if p.price_in is None else p.price_in,
+        VARSAYILAN_CIKTI if p.price_out is None else p.price_out,
+    )
 
 
 def by_label(label: str) -> Provider:
