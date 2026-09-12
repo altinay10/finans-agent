@@ -621,3 +621,290 @@ def test_daily_coverage_flags_a_sparse_series_but_not_a_daily_one():
     assert _daily_coverage(ykp) < 0.5, "seyrek uzak geçmiş uyarıyı tetiklemeli"
     assert _daily_coverage([]) is None
     assert _daily_coverage([(son, 1.0)]) is None
+
+
+# ------------------------------------------- fon tablosu: birim ve biçim ----
+
+def test_scenario_columns_carry_their_unit(seeded_db):
+    """Para sütunu başlığı birimini SÖYLEMELİ.
+
+    Canlıda tablo `412923.6` gösteriyordu (inceleme, 2026-09-08) ve bunun
+    TL mi yüzde mi olduğu okunmuyordu. Fon getirisi yüzde olarak da
+    sunulabilen bir büyüklük olduğu için tahmin işe yaramıyor — oysa
+    `core.fund.simulate` bir TUTAR döndürüyor.
+    """
+    from app.panels.fund import FIYAT_SUTUNLARI, TUTAR_SUTUNLARI, _scenario_rows, _try_deposit_rates
+
+    _try_deposit_rates.clear()
+    son = date(2026, 9, 4)
+    prices = [(son - timedelta(days=k), 10.0 + k * 0.01) for k in range(0, 400)]
+
+    rows, _ = _scenario_rows(prices, son, 10.0, 1_000_000, 0.15, False)
+    assert rows, "senaryolar üretilmeliydi"
+
+    para_sutunlari = set(FIYAT_SUTUNLARI) | set(TUTAR_SUTUNLARI)
+    # Biçimlendirilen sütunların HEPSİ tabloda gerçekten var mı? (Ad
+    # değişip biçimleyici sessizce devre dışı kalmasın.)
+    assert para_sutunlari <= set(rows[0])
+    # Ve tabloda birimsiz kalmış bir para sütunu yok mu?
+    for sutun in rows[0]:
+        if sutun in ("Senaryo", "Başlangıç tarihi"):
+            continue
+        assert sutun.endswith("(TL)"), f"{sutun!r} birimini söylemiyor"
+
+
+def test_gross_return_is_an_amount_not_a_percentage(seeded_db):
+    """Başlığın '(TL)' demesi ancak sayı GERÇEKTEN tutarsa doğru olur."""
+    from app.panels.fund import _scenario_rows, _try_deposit_rates
+
+    _try_deposit_rates.clear()
+    son = date(2026, 9, 4)
+    # Fiyat iki katına çıkmış: 100.000 anaparada brüt getiri 100.000 TL,
+    # yüzde olsaydı 100 olurdu.
+    prices = [(son - timedelta(days=40), 1.0), (son, 2.0)]
+
+    rows, _ = _scenario_rows(prices, son, 2.0, 100_000, 0.15, False)
+    ay = next(r for r in rows if r["Senaryo"] == "1 ay")
+    assert ay["Brüt getiri (TL)"] == pytest.approx(100_000)
+
+
+# ------------------------------------------------------- anapara kutusu ----
+
+
+def test_principal_input_label_has_no_currency_unit():
+    """Etiket birimsiz kalmalı.
+
+    Kilitlenen şey gerçek: etiket seçilen para birimine bağlanamaz, çünkü
+    tutar bütün sekmelerde ORTAK ve Kredi ile Fon sekmeleri onu her koşulda
+    TL sayıyor; para birimi seçicisi yalnızca Mevduat sekmesinin içinde
+    (bkz. app/panels/deposit.py).
+    """
+    from app.panels.common import PRINCIPAL_LABEL
+
+    assert PRINCIPAL_LABEL == "Anapara"
+
+
+def test_principal_box_only_in_panels_that_use_the_amount():
+    """Kutu tutarla işi olan dört sekmede var, diğerlerinde yok.
+
+    Kaynak denetleniyor çünkü kutuyu çizmek Streamlit çalıştırmak demek;
+    kilitlenen kural ise yerleşim: Agent, Kaynaklar, Kayıtlar ve durum
+    şeridi tutarı hiç kullanmıyor, orada bir anapara kutusu görünmemeli.
+    Kutu ayrıca sekmelerin ÜSTÜNDE (app/main.py) değil, sekmelerin İÇİNDE.
+    """
+    from pathlib import Path
+
+    panels = Path(__file__).resolve().parent.parent / "app" / "panels"
+    kullanan = {"fx.py", "deposit.py", "loan.py", "fund.py"}
+    kullanmayan = {"agent.py", "sources.py", "logs.py", "status.py"}
+
+    for ad in kullanan:
+        assert "principal_input(" in (panels / ad).read_text(encoding="utf-8"), ad
+    for ad in kullanmayan:
+        assert "principal_input(" not in (panels / ad).read_text(encoding="utf-8"), ad
+
+    ana = (panels.parent / "main.py").read_text(encoding="utf-8")
+    assert "st.text_input(" not in ana
+
+
+def test_principal_boxes_share_one_amount(monkeypatch):
+    """Bir sekmede girilen tutar diğer sekmelerin kutusuna da yansır.
+
+    Sekmeler ayrı `key` taşımak zorunda (Streamlit hepsini aynı
+    çalıştırmada render eder), bu yüzden ortaklık kanonik tutar üzerinden
+    kuruluyor. Test o zinciri taklit ediyor: Döviz kutusuna ham "2500000"
+    yazılıyor, sonra Mevduat kutusu çiziliyor ve orada ayrılmış gösterimi
+    okuması bekleniyor.
+    """
+    from app.panels import common
+
+    class _SahteStreamlit:
+        def __init__(self):
+            self.session_state = {}
+            self.cizilen = []
+
+        def text_input(self, label, key=None, on_change=None, args=()):
+            self.cizilen.append((label, key, self.session_state[key]))
+
+    sahte = _SahteStreamlit()
+    monkeypatch.setattr(common, "st", sahte)
+
+    assert common.principal_input("doviz") == common.DEFAULT_PRINCIPAL
+
+    # Kullanıcı Döviz kutusuna ayırıcısız yazıyor; kutunun on_change'i budur.
+    sahte.session_state["anapara_doviz"] = "2500000"
+    common._principal_changed("anapara_doviz")
+
+    assert common.principal_input("mevduat") == 2_500_000
+    assert sahte.cizilen[-1] == ("Anapara", "anapara_mevduat", "2,500,000")
+    # Aynı çalıştırmada Döviz kutusu da kanonik gösterime dönüyor.
+    common.principal_input("doviz")
+    assert sahte.session_state["anapara_doviz"] == "2,500,000"
+
+
+def test_principal_input_keeps_last_amount_when_box_emptied():
+    """Kutu boşaltılırsa tutar sıfıra düşmez, son geçerli değer kalır.
+
+    Sessizce sıfıra düşmek bütün sekmelerin hesabını fark edilmeden
+    bozardı; boş kutu bir tutar değil, yarım kalmış bir düzenlemedir.
+    """
+    from app.panels import common
+
+    class _SahteStreamlit:
+        def __init__(self):
+            self.session_state = {}
+
+        def text_input(self, label, key=None, on_change=None, args=()):
+            pass
+
+    import pytest as _pytest
+
+    sahte = _SahteStreamlit()
+    with _pytest.MonkeyPatch.context() as mp:
+        mp.setattr(common, "st", sahte)
+        common.principal_input("kredi")
+        sahte.session_state["anapara_kredi"] = "750000"
+        common._principal_changed("anapara_kredi")
+        sahte.session_state["anapara_kredi"] = "   "
+        common._principal_changed("anapara_kredi")
+        assert common.principal_input("kredi") == 750_000
+
+
+# --------------------------------------------------- döviz: TCMB karşılığı ----
+
+
+def _fx_frame():
+    """Döviz panelinin `render` içinde kurduğu çerçevenin asgari hâli."""
+    import pandas as pd
+
+    an = datetime(2026, 9, 10, 8, 0, tzinfo=timezone.utc)
+    return pd.DataFrame(
+        [
+            {"institution": "TCMB", "currency": "USD", "buy": 40.0, "sell": 40.0,
+             "quoted_at": an, "is_fresh": True},
+            {"institution": "TCMB", "currency": "EUR", "buy": 50.0, "sell": 50.0,
+             "quoted_at": an, "is_fresh": True},
+            {"institution": "AKBANK", "currency": "USD", "buy": 39.0, "sell": 41.0,
+             "quoted_at": an, "is_fresh": True},
+        ]
+    )
+
+
+def test_fx_conversion_uses_tcmb_sell_rate_only():
+    """Karşılık TCMB SATIŞ kurundan hesaplanır, banka kotasyonu karışmaz.
+
+    Bankaya göre değişen bir cevap ("1 milyon TL kaç dolar") panelde tek bir
+    sayı olarak gösterilemez; hesabın tabanı resmî çapa olmalı.
+    """
+    from app.panels.fx import tcmb_conversion
+
+    sonuc = tcmb_conversion(_fx_frame(), 1_000_000)
+
+    assert list(sonuc["currency"]) == ["EUR", "USD"]
+    assert dict(zip(sonuc["currency"], sonuc["converted"])) == pytest.approx(
+        {"EUR": 20_000.0, "USD": 25_000.0}
+    )
+
+
+def test_fx_conversion_skips_broken_rate_rows():
+    """Satış kuru sıfır gelen satır elenir — bölme hatası paneli çökertmesin."""
+    from app.panels.fx import tcmb_conversion
+
+    df = _fx_frame()
+    df.loc[df["currency"] == "EUR", "sell"] = 0.0
+
+    sonuc = tcmb_conversion(df, 1_000_000)
+
+    assert list(sonuc["currency"]) == ["USD"]
+
+
+def test_fx_conversion_empty_when_no_tcmb_quote():
+    """TCMB kuru yoksa banka kuruyla hesap YAPILMAZ, tablo boş döner."""
+    from app.panels.fx import tcmb_conversion
+
+    df = _fx_frame()
+    df = df[df["institution"] != "TCMB"]
+
+    assert tcmb_conversion(df, 1_000_000).empty
+
+
+# --------------------------------------------- döviz: kuruma göre tazelik ----
+
+def test_tcmb_is_not_called_stale_after_a_few_hours():
+    """TCMB gösterge kurunu GÜNDE BİR yayımlıyor; 2 saatlik sınır ona haksız.
+
+    Canlı gözlem (2026-09-08): panel TCMB satırını "2 saatten eski —
+    kotasyon bayat olabilir (Yaş: 20,5 saat)" diye soluk gösteriyordu.
+    Veri o günün RESMÎ kuruydu; sürekli görünen bu uyarı, gerçekten
+    bayatlayan günü de görünmez kılıyordu.
+    """
+    from app.panels.fx import STALE_HOURS, stale_hours
+
+    yas = 20.5
+    assert yas > STALE_HOURS, "ticari banka sınırı gerçekten aşılmalı (test tautoloji değil)"
+    assert yas <= stale_hours("TCMB")
+    assert yas > stale_hours("VAKIFBANK"), "banka kotasyonu için sınır gevşememeli"
+
+
+def test_bank_quotes_keep_the_tight_threshold():
+    """TCMB istisnası diğer kurumlara sızmamalı."""
+    from app.panels.fx import STALE_HOURS, stale_hours
+
+    for kurum in ("VAKIFBANK", "ZIRAAT", "ENPARA", "bilinmeyen-kurum"):
+        assert stale_hours(kurum) == STALE_HOURS
+
+
+def test_tcmb_threshold_is_read_from_the_scheduler_not_copied(monkeypatch):
+    """Panel eşiği zamanlayıcıdan OKUMALI, kendi kopyasını tutmamalı.
+
+    `scheduler.MAX_AGE_HOURS["fx_tcmb"]` "bu veriyi yeniden çekmeli miyim"
+    diye soruyor, panel "bunu bayat göstermeli miyim" diye — ikisi de aynı
+    gerçeğe (TCMB günde bir yayımlar) dayanıyor. İkinci bir kopya, biri
+    değişince sessizce kayardı: panel bayat derken zamanlayıcı hiçbir şey
+    yapmazdı. Eşitliği doğrulamak yetmezdi (iki sabit tesadüfen eşit
+    olabilir), bu yüzden zamanlayıcının değeri DEĞİŞTİRİLİP panelin onu
+    izlediği görülüyor.
+    """
+    import scheduler
+    from app.panels.fx import stale_hours
+
+    monkeypatch.setitem(scheduler.MAX_AGE_HOURS, "fx_tcmb", 42)
+    assert stale_hours("TCMB") == 42
+
+
+def test_tcmb_threshold_covers_a_full_publication_cycle():
+    """Sınır, TCMB'nin yayım aralığından kısa olmamalı.
+
+    TCMB iş günlerinde günde bir kez yayımlıyor; 24 saatin altındaki bir
+    sınır günün bir bölümünde her zaman "bayat" demek olurdu — düzeltilen
+    hatanın tam kendisi.
+    """
+    from app.panels.fx import stale_hours
+
+    assert stale_hours("TCMB") >= 24
+
+
+# ------------------------------------- streamlit: kaldırılan parametreler ----
+
+def test_no_panel_still_uses_the_removed_container_width_parameter():
+    """`use_container_width` kaldırılma yolunda; panellerde kalmamalı.
+
+    Streamlit her koşuda konteyner loglarını bu uyarıyla dolduruyordu
+    (`docker logs finans-panel`, 2026-09-08): "Please replace
+    use_container_width with width... will be removed after 2025-12-31."
+    Sürekli akan bir uyarı, log'da gerçek hatayı görünmez kılıyor.
+
+    Bu bir stil kuralı değil ÇALIŞABİLİRLİK kuralı: parametre tamamen
+    kaldırıldığında geri sızan tek bir çağrı paneli TypeError ile düşürür
+    ve bunu ancak kullanıcı o sekmeyi açtığında öğreniriz.
+    """
+    from pathlib import Path
+
+    kok = Path(__file__).resolve().parent.parent
+    kalanlar = [
+        f"{yol.relative_to(kok)}:{no}"
+        for yol in sorted((kok / "app").rglob("*.py"))
+        for no, satir in enumerate(yol.read_text(encoding="utf-8").splitlines(), 1)
+        if "use_container_width" in satir
+    ]
+    assert kalanlar == [], f"width='stretch' olmalı: {kalanlar}"

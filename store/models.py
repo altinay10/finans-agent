@@ -104,6 +104,31 @@ class LoanRate(Base):
     valid_date: Mapped[date] = mapped_column(Date, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
+    # KAMPANYA ORANI MI? Yani herkesin değil, yalnızca belirli bir grubun
+    # (yeni müşteri, ön onaylı, emekli, kampanyanın ilk kullanımı)
+    # alabildiği bir oran mı.
+    #
+    # NEDEN SÜTUN OLARAK VAR: bu oranlar eskiden TAMAMEN ELENİYORDU
+    # (`loan_rates_llm._ground`) ve bedeli ağırdı — Odeabank'ın sekiz,
+    # QNB'nin altı oranının hepsi kampanyalı olduğu için o iki banka
+    # panelde HİÇ görünmüyordu ve kaynak "bozuk" damgası yiyordu
+    # (inceleme, 2026-09-08). Oysa sayfa çalışıyordu, model doğru
+    # davranıyordu; elenen şey gerçek ve kullanıcıyı ilgilendiren veriydi.
+    #
+    # ELEMENİN ASIL SEBEBİ BAŞKA YERDEYDİ: `persist` aynı (kurum, tür) için
+    # EN DÜŞÜK oranı saklıyor ve kampanya oranı hep en düşük olduğu için
+    # "en iyi oran" sistematik olarak "en koşullu oran" oluyordu (ING
+    # %0,99, canlı hata 2026-08-30). Bu sütun o seçimi ikiye ayırıyor:
+    # herkese açık oranların en düşüğü ve kampanyalıların en düşüğü AYRI
+    # satırlar. Böylece kampanya oranı asla genel oranın yerine geçmiyor
+    # ama veri de kaybolmuyor.
+    is_campaign: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    #: Oranın kimlere açık olduğunu anlatan gerekçe (modelin `why` alanı).
+    #: Panelde rozetin ipucu olarak gösteriliyor; kampanyanın NEDEN
+    #: kampanya sayıldığı denetlenebilir kalsın diye saklanıyor.
+    campaign_note: Mapped[str | None] = mapped_column(String, nullable=True)
+
 
 class Fund(Base):
     __tablename__ = "funds"

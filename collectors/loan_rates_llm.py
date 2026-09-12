@@ -317,9 +317,18 @@ class LlmLoanRateCollector(Collector):
             if dropped:
                 logger.warning("loan_rates_llm/%s: %s", code, dropped.aciklama())
             if not kept:
+                # Buraya artık YALNIZCA zeminleme tutmadığında düşülüyor.
+                # Eskiden kampanya elemesi de buraya düşürüyordu ve sonuç
+                # yanlıştı: sayfa çalışıyor, model doğru davranıyor, ama
+                # kaynak "bozuk" görünüyordu (odeabank ve qnb, 18 saattir
+                # bozuk damgası — inceleme 2026-09-08). Kampanya oranları
+                # artık saklandığı için o durumda `kept` dolu ve koşu 'ok'.
                 self.record_source(
                     code.lower(), phase="parse", status="empty",
-                    error=f"agent {len(rows)} kayıt döndürdü — {dropped.aciklama()}",
+                    error=(
+                        f"agent {len(rows)} kayıt döndürdü — "
+                        f"{dropped.aciklama() or 'hiçbiri sayfada doğrulanamadı'}"
+                    ),
                 )
                 continue
 
@@ -357,9 +366,13 @@ class LlmLoanRateCollector(Collector):
                     )
                     continue
 
+            # NOT, 'dropped' TRUTHY OLMASA DA YAZILIYOR: kampanya işareti
+            # artık eleme değil, ama koşu kaydında görünmesi şart —
+            # kullanıcının "bu bankanın genel oranı neden yok" sorusunun
+            # cevabı tam olarak bu satır.
             self.record_source(
                 code.lower(), phase="parse", status="ok", rows=len(kept),
-                error=(dropped.aciklama() if dropped else None),
+                error=(dropped.aciklama() or None),
             )
             kurum = self.banks[code].get("institution", code)
             for row in kept:
@@ -370,6 +383,10 @@ class LlmLoanRateCollector(Collector):
                         monthly_rate=row.monthly_rate_percent / 100,
                         term_min=row.term_min_months,
                         term_max=row.term_max_months,
+                        is_campaign=not row.available_to_all,
+                        # Gerekçe yalnızca kampanyalı satırda anlamlı;
+                        # genel oranda "kısıt yok" yazmak gürültü olurdu.
+                        campaign_note=(row.why or None) if not row.available_to_all else None,
                     )
                 )
 
@@ -384,14 +401,17 @@ class LlmLoanRateCollector(Collector):
             if r.term_min is not None and r.term_max is not None and r.term_min > r.term_max:
                 raise SanityCheckError(f"{r.institution}/{r.loan_type}: term_min > term_max")
 
-        # Aynı (kurum, tür) için birden fazla oran gelirse EN DÜŞÜĞÜ tutulur
-        # — sayfalarda kampanya oranı ile tabela oranı yan yana durabiliyor
-        # ve düşük göstermek yüksek göstermekten güvenlidir. Bunu burada
-        # doğrulamıyoruz, persist'te yapıyoruz; burada yalnızca çelişkiyi
-        # yakalıyoruz.
-        seen: dict[tuple[str, str], float] = {}
+        # Aynı (kurum, tür, kampanya) için birden fazla oran gelirse EN
+        # DÜŞÜĞÜ tutulur; bunu burada değil persist'te yapıyoruz, burada
+        # yalnızca çelişkiyi yakalıyoruz.
+        #
+        # ANAHTARDA KAMPANYA DA VAR: aynı sayfada kampanya oranı ile tabela
+        # oranı yan yana durabiliyor ve bunlar TANIM GEREĞİ farklı olmalı.
+        # İkisini aynı kovaya koymak, aralarındaki normal farkı "agent
+        # çelişkili iki oran döndürdü" sanmaya götürürdü.
+        seen: dict[tuple[str, str, bool], float] = {}
         for r in records:
-            key = (r.institution, r.loan_type)
+            key = (r.institution, r.loan_type, r.is_campaign)
             if key in seen and abs(seen[key] - r.monthly_rate) > 0.10:
                 raise SanityCheckError(
                     f"{r.institution}/{r.loan_type}: agent birbirinden 10 puandan fazla "
@@ -405,15 +425,22 @@ class LlmLoanRateCollector(Collector):
         now = utc_now()
         today = istanbul_today()
 
-        # Aynı (kurum, tür) için en düşük oranı bırak. Bu kural ANCAK
-        # _ground() koşullu oranları eledikten sonra güvenli: eskiden
-        # elemiyordu ve "en düşük", kampanya sayfalarında sistematik olarak
-        # "yalnızca yeni müşteriye verilen oran" anlamına geliyordu.
-        # Buraya gelen oranların hepsi herkese açık olduğu için, en düşüğü
-        # seçmek artık kullanıcının gerçekten alabileceği en iyi orandır.
-        best: dict[tuple[str, str], LoanRateRecord] = {}
+        # EN DÜŞÜK ORAN, HER GRUP İÇİNDE AYRI SEÇİLİR.
+        #
+        # Anahtarın üçüncü alanı (`is_campaign`) bu düzeltmenin can alıcı
+        # noktası. Eskiden anahtar (kurum, tür) idi ve kampanya oranı hep
+        # en düşük olduğu için "en iyi oran" sistematik olarak "en koşullu
+        # oran" oluyordu — ING %0,99 (canlı hata, 2026-08-30). Buna karşı
+        # kampanyalı satırlar TAMAMEN eleniyordu ve bu sefer de Odeabank
+        # ile QNB panelden tümden kayboluyordu (inceleme, 2026-09-08).
+        #
+        # Grubu anahtara koymak ikisini birden çözüyor: herkese açık
+        # oranların en düşüğü ile kampanyalıların en düşüğü AYRI satırlar.
+        # Kampanya oranı genel oranın yerine geçemiyor (farklı anahtar),
+        # ama veri de kaybolmuyor.
+        best: dict[tuple[str, str, bool], LoanRateRecord] = {}
         for r in records:
-            key = (r.institution, r.loan_type)
+            key = (r.institution, r.loan_type, r.is_campaign)
             if key not in best or r.monthly_rate < best[key].monthly_rate:
                 best[key] = r
 
@@ -424,12 +451,14 @@ class LlmLoanRateCollector(Collector):
                         LoanRate.institution == r.institution,
                         LoanRate.loan_type == r.loan_type,
                         LoanRate.valid_date == today,
+                        LoanRate.is_campaign == r.is_campaign,
                     )
                 ).scalar_one_or_none()
                 if exists:
                     exists.monthly_rate = r.monthly_rate
                     exists.term_min = r.term_min
                     exists.term_max = r.term_max
+                    exists.campaign_note = r.campaign_note
                     exists.fetched_at = now
                     continue
                 session.add(
@@ -441,13 +470,23 @@ class LlmLoanRateCollector(Collector):
                         term_max=r.term_max,
                         valid_date=today,
                         fetched_at=now,
+                        is_campaign=r.is_campaign,
+                        campaign_note=r.campaign_note,
                     )
                 )
             session.commit()
 
+        # ORAN DEĞİŞİM İZİ YALNIZCA GENEL ORANLAR İÇİN. Kampanya oranları
+        # tanım gereği gelip geçici; onları da bu seriye katmak "faiz
+        # değişti" izini kampanya başlangıç/bitişleriyle doldurur ve asıl
+        # sinyali (bankanın tabela oranı kımıldadı mı) boğardı.
         changed = record_rate_changes(
             "loan",
-            {(r.institution, r.loan_type): r.monthly_rate for r in best.values()},
+            {
+                (r.institution, r.loan_type): r.monthly_rate
+                for r in best.values()
+                if not r.is_campaign
+            },
             run_id=run_id,
         )
         if changed:
@@ -574,7 +613,7 @@ _SENT_END = re.compile(r"[.!?…]\s|\n")
 
 
 class _Eleme(int):
-    """Elenen kayıt sayısı — AMA sebebini de taşır.
+    """ELENEN kayıt sayısı — ama işaretlenenleri de ayrıca sayar.
 
     Düz bir sayı yetmiyordu: koşu kaydına "N kayıt sayfada bulunamadı"
     yazılıyordu ve bu, erişilebilirlik elemesini UYDURMA gibi gösteriyordu.
@@ -582,22 +621,27 @@ class _Eleme(int):
     "ön onaylı müşterilere" özel olduğu için elenmişti, ki bu doğru
     davranış. Yanlış etiket beni olmayan bir hatayı kovalamaya gönderdi.
 
-    int'ten türüyor ki mevcut `if dropped:` kontrolleri aynen çalışsın.
+    İKİ SAYI, İKİ FARKLI ŞEY (2026-09-12): `yok_sayfada` gerçekten ATILAN
+    kayıt — zeminleme tutmadı, veri şüpheli. `kosullu` ise ATILMAYAN,
+    yalnızca kampanya diye İŞARETLENEN kayıt (bkz. `_ground`). int değeri
+    yalnızca ATILANLARI sayar, çünkü `if dropped:` kontrolleri "bir şey
+    kaybettik mi" diye soruyor ve işaretlemek kayıp değil.
     """
 
-    def __new__(cls, toplam: int, yok_sayfada: int, kosullu: int):
-        self = super().__new__(cls, toplam)
+    def __new__(cls, yok_sayfada: int, kosullu: int):
+        self = super().__new__(cls, yok_sayfada)
         self.yok_sayfada = yok_sayfada
         self.kosullu = kosullu
         return self
 
     def aciklama(self) -> str:
+        """Koşu kaydına yazılacak not; söylenecek bir şey yoksa boş dizge."""
         parcalar = []
         if self.yok_sayfada:
             parcalar.append(f"{self.yok_sayfada} kayıt sayfada bulunamadı")
         if self.kosullu:
-            parcalar.append(f"{self.kosullu} kayıt herkese açık değil")
-        return ", ".join(parcalar) or "eleme yok"
+            parcalar.append(f"{self.kosullu} kayıt kampanyalı (herkese açık değil)")
+        return ", ".join(parcalar)
 
 
 def _snap_back(text: str, pos: int, rate_pos: int) -> int:
@@ -651,26 +695,38 @@ def _snap_forward(text: str, pos: int) -> int:
 
 
 def _ground(rows, text: str, code: str) -> tuple[list, int]:
-    """Sayfada GEÇEN ve HERKESE AÇIK oranları bırakır.
+    """Sayfada GEÇEN oranları bırakır; koşullu olanları İŞARETLER.
 
-    İki ayrı kontrol, iki ayrı hata türü için:
+    ZEMİNLEME oranın uydurma olmadığını garanti eder — ELEYEN tek kontrol
+    budur. Model bir sayı uydurursa kaynakta bulunmaz ve kayıt atılır.
 
-    ZEMİNLEME oranın uydurma olmadığını garanti eder. Bu yeterli sanılmıştı
-    ve değildi — canlı gözlem (2026-08-30): panel ING'yi aylık %0,99 diye
-    gösteriyordu, DenizBank'ın %2,99'unun üçte biri. Sayı sayfada gerçekten
-    yazıyordu, yani zeminleme kusursuz çalışmıştı; %0,99 "Turuncu Ekstra
-    Avantajlı Kredi"nin oranıydı ve YALNIZCA kampanyanın ilk kredi
-    kullanımında geçerliydi. `persist` en düşüğü sakladığı için kampanya
-    sayfalarında "en düşük oran" sistematik olarak "en koşullu oran"
-    oluyordu.
+    ERİŞİLEBİLİRLİK ise ELEME DEĞİL, ETİKET. Ayrım önemli, çünkü ikisi
+    farklı şeyler söylüyor: zeminleme "bu sayı gerçek mi", erişilebilirlik
+    "bu sayı KİME açık" diye soruyor. İkincisinin cevabı "herkese değil"
+    olduğunda veri yanlış olmuyor, yalnızca koşullu oluyor.
 
-    ERİŞİLEBİLİRLİK kontrolü bu ikinci hatayı kapatıyor ve kararı MODEL
-    veriyor. Python'da anahtar kelimeyle denendi ve başarısız oldu: %0,99'u
-    diskalifiye eden cümle, oranın geçtiği cümlenin bir SONRAKİSİ; üstelik
-    Halkbank'ın gerekçesi "yeni müşterilere özel olduğuna dair kısıt YOK"
-    diyor — "yeni müşteri" kelimesini arayan bir filtre onu da elerdi.
-    Modele sorulan soru bilinçli olarak dar: yorum değil, tek bir evet/hayır.
-    Uydurmaya karşı asıl güvence hâlâ zeminleme, bu onun üstüne biniyor.
+    NEDEN ÖNCE ELENİYORDU: `persist` aynı (kurum, tür) için en düşük oranı
+    saklıyordu ve kampanya oranı hep en düşük olduğu için "en iyi oran"
+    sistematik olarak "en koşullu oran" oluyordu. Canlı gözlem
+    (2026-08-30): panel ING'yi aylık %0,99 gösteriyordu, DenizBank'ın
+    %2,99'unun üçte biri. Sayı sayfada gerçekten yazıyordu — zeminleme
+    kusursuz çalışmıştı; %0,99 "Turuncu Ekstra Avantajlı Kredi"nin oranıydı
+    ve yalnızca kampanyanın ilk kullanımında geçerliydi.
+
+    NEDEN ARTIK ELENMİYOR: elemenin bedeli, çözdüğü sorundan büyük çıktı.
+    Odeabank'ın sekiz, QNB'nin altı oranının hepsi kampanyalıydı; ikisi de
+    panelde HİÇ görünmedi ve kaynakları "18 saattir bozuk" damgası yedi
+    (inceleme, 2026-09-08). Asıl sorun `persist`'in SEÇİMİYDİ ve düzeltme
+    oraya taşındı: kampanyalı ve herkese açık oranlar ayrı satırlar olarak
+    saklanıyor, "en düşük" seçimi her grup içinde ayrı yapılıyor. Kampanya
+    oranı hâlâ genel oranın yerine geçemiyor, ama artık kaybolmuyor da.
+
+    Kararı MODEL veriyor. Python'da anahtar kelimeyle denendi ve başarısız
+    oldu: %0,99'u diskalifiye eden cümle, oranın geçtiği cümlenin bir
+    SONRAKİSİ; üstelik Halkbank'ın gerekçesi "yeni müşterilere özel
+    olduğuna dair kısıt YOK" diyor — "yeni müşteri" kelimesini arayan bir
+    filtre onu da elerdi. Modele sorulan soru bilinçli olarak dar: yorum
+    değil, tek bir evet/hayır.
     """
     kept, dropped, yok_sayfada, kosullu = [], 0, 0, 0
     for row in rows:
@@ -683,13 +739,15 @@ def _ground(rows, text: str, code: str) -> tuple[list, int]:
             )
             continue
         if not row.available_to_all:
-            dropped += 1
+            # ATILMIYOR, SAYILIYOR: koşu kaydına "n oran kampanyalı" diye
+            # geçsin ki kullanıcı panelde neden o bankanın genel oranını
+            # görmediğini anlayabilsin.
             kosullu += 1
             logger.info(
-                "loan_rates_llm/%s: %%%.2f herkese açık değil, atlandı — %s",
+                "loan_rates_llm/%s: %%%.2f herkese açık değil, kampanya olarak "
+                "işaretlendi — %s",
                 code, row.monthly_rate_percent, (row.why or "gerekçe yok")[:100],
             )
-            continue
         # Demirleme DENETİMİ — eleme değil, uyarı. Model oranı kendi
         # cümlesine bağlayamadıysa erişilebilirlik kararı da şüphelidir.
         # Kaydı burada ATMIYORUZ: alıntı boş gelmesi (şema varsayılanı)
@@ -704,7 +762,7 @@ def _ground(rows, text: str, code: str) -> tuple[list, int]:
                 code, row.monthly_rate_percent, row.rate_sentence[:120],
             )
         kept.append(row)
-    return kept, _Eleme(dropped, yok_sayfada, kosullu)
+    return kept, _Eleme(yok_sayfada, kosullu)
 
 
 def _load_banks() -> dict[str, dict]:

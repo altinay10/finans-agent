@@ -54,6 +54,12 @@ class LoanRateRecord(BaseModel):
     term_min: int | None = None
     term_max: int | None = None
     amount_max: float | None = None
+    # Bu oran herkese değil belirli bir gruba mı açık (bkz.
+    # store/models.py::LoanRate.is_campaign). API toplayıcıları bankanın
+    # kendi tabela oranını çekiyor, bu yüzden varsayılan False; alanı
+    # dolduran tek yer şimdilik `loan_rates_llm`.
+    is_campaign: bool = False
+    campaign_note: str | None = None
 
     @model_validator(mode="after")
     def _bounds(self):
@@ -624,11 +630,17 @@ class LoanRateCollector(Collector):
         today = istanbul_today()
         with SessionLocal() as session:
             for r in records:
+                # is_campaign ANAHTARDA: bu toplayıcı yalnızca genel oran
+                # yazıyor (hepsinde False), ama aynı satıra `loan_rates_llm`
+                # de yazabiliyor ve o kampanyalı satır da üretiyor. Koşul
+                # olmadan buradaki sorgu bir bankanın kampanya satırını
+                # bulup üzerine genel oranı yazabilirdi.
                 exists = session.execute(
                     select(LoanRate).where(
                         LoanRate.institution == r.institution,
                         LoanRate.loan_type == r.loan_type,
                         LoanRate.valid_date == today,
+                        LoanRate.is_campaign == r.is_campaign,
                     )
                 ).scalar_one_or_none()
                 if exists:
@@ -648,6 +660,8 @@ class LoanRateCollector(Collector):
                         amount_max=r.amount_max,
                         valid_date=today,
                         fetched_at=now,
+                        is_campaign=r.is_campaign,
+                        campaign_note=r.campaign_note,
                     )
                 )
             session.commit()

@@ -37,6 +37,7 @@ from store.clock import ISTANBUL
 from store import heartbeat
 from store import llm_backoff
 from store.db import SessionLocal, init_db
+from store.backup import run_backup
 from store.retention import purge
 
 from store.logging_setup import setup_logging
@@ -394,6 +395,11 @@ def main() -> None:
             next_catchup = now_utc + timedelta(minutes=CATCHUP_INTERVAL_MINUTES)
 
         if now_utc >= next_purge:
+            # YEDEK ÖNCE, BUDAMA SONRA. Sıra önemli: budama kayıt siliyor
+            # ve o gün bir şey yanlış giderse, silinmeden ÖNCEKİ hâlin
+            # yedeği elde olsun. Tersi sırada, hatalı bir saklama süresi
+            # ayarı veriyi hem siler hem de yedeğe o silinmiş hâli yazardı.
+            run_backup()
             purge()
             next_purge = now_utc + timedelta(days=1)
 

@@ -92,7 +92,7 @@ def render() -> None:
             pd.DataFrame(
                 [_table_row(r, health) for r in sorted(dataset_rows, key=_sort_key)]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
         _render_reasons(dataset_rows)

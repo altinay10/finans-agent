@@ -239,11 +239,29 @@ def profit_share_ratios(principal: float, currency: str = "TRY") -> list[dict]:
         return sorted(best.values(), key=lambda x: (x["institution"], x["term_days"]))
 
 
-def latest_loan_rates(loan_type: str) -> list[dict]:
+def latest_loan_rates(loan_type: str, *, include_campaign: bool = False) -> list[dict]:
+    """Her kurumun bu türdeki en güncel oranı.
+
+    VARSAYILAN GENEL ORAN. Kampanyalı satırlar (yalnızca yeni müşteriye,
+    ön onaylıya, belirli bir meslek grubuna verilen oranlar) ancak açıkça
+    istenirse dönüyor. Sebebi şu: bu liste kredi kıyaslama tablosunu ve
+    ödeme planını besliyor, yani kullanıcının "ben bu krediyi alsam ne
+    öderim" sorusunu. Alamayacağı bir oranı varsayılan olarak göstermek o
+    sorunun cevabını yanlışlar — kampanya oranları saklanıyor ama
+    kullanıcı onları görmeyi kendisi seçiyor (bkz.
+    store/models.py::LoanRate.is_campaign).
+    """
     with SessionLocal() as session:
+        kosullar = [LoanRate.loan_type == loan_type]
+        if not include_campaign:
+            kosullar.append(LoanRate.is_campaign.is_(False))
+
+        # En güncel tarih de aynı süzgeçle bulunuyor: yalnızca kampanya
+        # satırı olan bir gün, o bankanın daha eski ama GENEL oranını
+        # görünmez kılmamalı.
         subq = (
             select(LoanRate.institution, func.max(LoanRate.valid_date).label("max_valid_date"))
-            .where(LoanRate.loan_type == loan_type)
+            .where(*kosullar)
             .group_by(LoanRate.institution)
             .subquery()
         )
@@ -251,7 +269,7 @@ def latest_loan_rates(loan_type: str) -> list[dict]:
             subq,
             (LoanRate.institution == subq.c.institution)
             & (LoanRate.valid_date == subq.c.max_valid_date),
-        ).where(LoanRate.loan_type == loan_type)
+        ).where(*kosullar)
         rows = session.execute(stmt).scalars().all()
         return [
             {
@@ -263,9 +281,29 @@ def latest_loan_rates(loan_type: str) -> list[dict]:
                 "amount_max": float(r.amount_max) if r.amount_max is not None else None,
                 "valid_date": r.valid_date,
                 "fetched_at": r.fetched_at,
+                "is_campaign": bool(r.is_campaign),
+                "campaign_note": r.campaign_note,
             }
             for r in rows
         ]
+
+
+def loan_campaign_count(loan_type: str) -> int:
+    """Bu türde kampanyalı orana sahip KURUM sayısı.
+
+    Panel bu sayıyı onay kutusunun etiketinde gösteriyor: "Kampanyalı /
+    yeni müşteri oranlarını da göster (2)". Sayı sıfırsa kutu hiç
+    çizilmiyor — gösterecek bir şey yokken filtre sunmak, kullanıcıya
+    olmayan bir veri varmış hissi verirdi.
+    """
+    with SessionLocal() as session:
+        subq = (
+            select(LoanRate.institution, func.max(LoanRate.valid_date).label("max_valid_date"))
+            .where(LoanRate.loan_type == loan_type, LoanRate.is_campaign.is_(True))
+            .group_by(LoanRate.institution)
+            .subquery()
+        )
+        return int(session.execute(select(func.count()).select_from(subq)).scalar() or 0)
 
 
 def loan_type_counts() -> dict[str, int]:
@@ -274,6 +312,11 @@ def loan_type_counts() -> dict[str, int]:
     Panelde "Konut: 3 banka · İhtiyaç: 5 · Taşıt: 1" satırını basar.
     Kullanıcının "ödeme planında neden sadece 3 banka var" sorusu tam olarak
     buydu: veri eksik değil, o türü yayınlayan banka sayısı üç.
+
+    KAMPANYALI SATIRLAR SAYILMIYOR: bu sayı tablodaki satır sayısını
+    açıklamak için var ve tablo varsayılan olarak genel oranları gösteriyor
+    (bkz. `latest_loan_rates`). Kampanyalıları katmak, sayıyla tablonun
+    birbirini tutmamasına yol açardı.
     """
     with SessionLocal() as session:
         subq = (
@@ -282,6 +325,7 @@ def loan_type_counts() -> dict[str, int]:
                 LoanRate.institution,
                 func.max(LoanRate.valid_date).label("max_valid_date"),
             )
+            .where(LoanRate.is_campaign.is_(False))
             .group_by(LoanRate.loan_type, LoanRate.institution)
             .subquery()
         )
@@ -675,6 +719,10 @@ def source_recovery(days: int = 30) -> list[dict]:
         return result
 
 
+#: Sapma araması için gereken EN AZ önceki koşu sayısı (bkz. `schema_drift`).
+DRIFT_MIN_GECMIS = 3
+
+
 def schema_drift(lookback_runs: int = 5) -> list[dict]:
     """"Sayfa kısmen değişti mi?" — satır sayısındaki ani düşüş uyarısı.
 
@@ -686,6 +734,27 @@ def schema_drift(lookback_runs: int = 5) -> list[dict]:
     Eşik %40: banka gerçekten bir vade dilimini kaldırmış olabilir (küçük
     düşüş normaldir), ama satırların yarıya yakını kaybolduysa bu ürün
     değişikliği değil ayrıştırma kaybıdır.
+
+    TABAN ORTALAMA DEĞİL MEDYAN. Ortalama, TEK BİR aykırı koşuyu sonsuza
+    kadar taşıyor ve bu canlıda sahte alarm üretti (2026-09-08): Yapı Kredi
+    Portföy toplayıcısı İLK koşusunda bir yıllık omurgayı çekip ~60-100
+    nokta yazıyor, sonraki rutin koşularda ise yalnızca son 28 günlük
+    pencereyi güncelliyor (bkz. `collectors/fund_providers/ykportfoy.py`,
+    WINDOW_DAYS). Yani 99 -> 20 düşüşü bozulma DEĞİL, toplayıcının normal
+    çalışma biçimi. Ortalama bunu 39,75'lik bir tabana çevirip her koşuda
+    "%50 düşüş" diye bağırıyordu; medyan tohumlama koşusunu tek bir aykırı
+    değer olarak yutuyor ve alarm üç pencereli koşudan sonra kendiliğinden
+    susuyor.
+
+    Toplayıcıya özel bir istisna (örn. "fund_prices ise sayma") bilinçli
+    olarak TERCİH EDİLMEDİ: o kural, bir fon sağlayıcının sayfası gerçekten
+    bozulup 20 -> 6 satıra düştüğünde dedektörü tamamen kör ederdi. Medyan
+    hem tohumlamayı görmezden geliyor hem de o düşüşü hâlâ yakalıyor.
+
+    EN AZ ÜÇ ÖNCEKİ KOŞU şartı bunun bedeli: bir kaynak eklendikten sonraki
+    ilk iki koşuda sapma aranmıyor. İki koşuluk geçmişten çıkarılan medyan
+    zaten aykırı değere ortalama kadar açıktı; iki koşuluk gecikme, sahte
+    alarmla açılan her yeni kaynağa yeğdir.
     """
     with SessionLocal() as session:
         rows = session.execute(
@@ -711,9 +780,10 @@ def schema_drift(lookback_runs: int = 5) -> list[dict]:
     for (collector, source), runs in history.items():
         runs.sort(key=lambda r: r["rn"])
         latest, previous = runs[0], runs[1:]
-        if not previous:
+        if len(previous) < DRIFT_MIN_GECMIS:
             continue
-        baseline = sum(r["rows"] for r in previous) / len(previous)
+        onceki = sorted(r["rows"] for r in previous)
+        baseline = onceki[len(onceki) // 2]
         if baseline <= 0:
             continue
         drop = (baseline - latest["rows"]) / baseline
@@ -859,6 +929,39 @@ def llm_cost_totals(days: int = 30) -> dict:
             {"window": f"-{int(days)} days"},
         ).mappings().one()
         return dict(row)
+
+
+def llm_last_outcome(model: str) -> dict | None:
+    """Bu modelle yapılan SON GERÇEK çağrı ne oldu? (yoksa None)
+
+    NEDEN GEREKLİ: Agent sekmesi "`.env`'deki anahtar kullanılıyor" diye
+    yeşil bir kutu gösteriyordu ve bunu HİÇ DOĞRULAMIYORDU. Anahtar
+    kullanılabilir olmasa bile kutu yeşildi; canlıda `qwen-flash` her
+    koşuda 403 "ModelAccessDenied" alırken panel 18 saat boyunca her şey
+    yolundaymış gibi göründü (inceleme, 2026-09-08). Sessiz arızanın
+    görünmemesinin sebebi buydu.
+
+    'disabled' ve 'budget_exceeded' ELENİYOR: bunlar tek token harcamayan
+    yapılandırma durumları, anahtar hakkında hiçbir şey söylemezler.
+    Anahtarın çalışıp çalışmadığını yalnızca gerçekten yapılmış bir çağrı
+    kanıtlar.
+    """
+    with SessionLocal() as session:
+        row = session.execute(
+            select(LlmCall)
+            .where(LlmCall.model == model, LlmCall.status.in_(("ok", "failed")))
+            .order_by(LlmCall.id.desc())
+            .limit(1)
+        ).scalars().first()
+        if row is None:
+            return None
+        return {
+            "model": row.model,
+            "status": row.status,
+            "error": row.error,
+            "collector": row.collector,
+            "created_at": row.created_at,
+        }
 
 
 def llm_triggers(limit: int = 50) -> list[dict]:

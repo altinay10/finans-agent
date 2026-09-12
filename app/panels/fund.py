@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from app.panels.common import fetched_caption
+from app.panels.common import fetched_caption, principal_input
 from config.loader import resolve_deposit_brackets, resolve_fund_withholding
 from core.deposit import resolve_withholding, rollover_return
 from core.fund import nearest_prior_price, simulate
@@ -18,6 +18,19 @@ from collectors.fund_providers import PROVIDERS
 from store import queries
 
 SCENARIOS = [("1 ay", 30), ("6 ay", 182), ("1 yıl", 365)]
+
+#: Senaryo tablosundaki para sütunları — başlıkta birim, gösterimde ayırıcı.
+#
+# FİYAT ve TUTAR AYRI: fon pay fiyatı çoğu fonda 0,0xxxxx mertebesinde;
+# iki basamağa yuvarlamak onu `0,05` yapıp bilgiyi tamamen siler. Tutarlar
+# ise yedi haneye çıkıyor, orada basamak ayırıcısı olmadan okunmuyor.
+FIYAT_SUTUNLARI = ("Başlangıç fiyatı (TL)", "Bugünkü fiyat (TL)")
+TUTAR_SUTUNLARI = (
+    "Brüt getiri (TL)",
+    "Net getiri, fon (TL)",
+    "Net getiri, TL mevduat kıyası (TL)",
+    "Vade sonu değer (TL)",
+)
 
 
 @st.cache_data(ttl=300)
@@ -78,8 +91,67 @@ def _deposit_comparison(principal: float, horizon_days: int) -> tuple[float, str
     return best_return, best_institution
 
 
-def render(principal: float) -> None:
+def _scenario_rows(
+    prices: list[tuple[date, float]],
+    price_end_date: date,
+    price_end: float,
+    principal: float,
+    withholding: float,
+    is_equity_heavy: bool,
+) -> tuple[list[dict], set[str]]:
+    """Senaryo tablosunun satırları — Streamlit'siz, saf.
+
+    `render`'ın içinden AYRILDI ki sütun başlıkları test edilebilsin.
+    Başlıklardaki birim bir gösterim ayrıntısı değil, doğruluk meselesi:
+    birimsiz bir "Brüt getiri" sütunu yüzde olarak okunabiliyor ve tabloda
+    yazan sayı bir TUTAR. Bunu kilitleyen testin `render` çağırması
+    gerekmesin diye satır üretimi buraya taşındı.
+    """
+    rows: list[dict] = []
+    comparison_sources: set[str] = set()
+    for label, days_back in SCENARIOS:
+        target = price_end_date - timedelta(days=days_back)
+        try:
+            price_start_date, price_start = nearest_prior_price(prices, target)
+        except ValueError:
+            continue
+        sim = simulate(
+            FundSimInput(
+                principal=principal,
+                price_start=price_start,
+                price_end=price_end,
+                date_start=price_start_date,
+                date_end=price_end_date,
+                withholding_rate=withholding,
+                is_equity_heavy=is_equity_heavy,
+            )
+        )
+        comparison = _deposit_comparison(principal, days_back)
+        deposit_net = comparison[0] if comparison else None
+        if comparison:
+            comparison_sources.add(comparison[1])
+        rows.append(
+            {
+                "Senaryo": label,
+                "Başlangıç tarihi": price_start_date.isoformat(),
+                "Başlangıç fiyatı (TL)": price_start,
+                "Bugünkü fiyat (TL)": price_end,
+                "Brüt getiri (TL)": round(sim.gross_return, 2),
+                "Net getiri, fon (TL)": round(sim.net_return, 2),
+                "Net getiri, TL mevduat kıyası (TL)": (
+                    round(deposit_net, 2) if deposit_net is not None else None
+                ),
+                "Vade sonu değer (TL)": round(sim.maturity_value, 2),
+            }
+        )
+    return rows, comparison_sources
+
+
+def render() -> None:
     st.subheader("Fon Simülasyonu")
+    # Fon simülasyonu tutarı her koşulda TL sayar (fon pay fiyatları TL).
+    principal = principal_input("fon")
+    st.caption("Yatırılacak tutar **TL** kabul edilir.")
     funds = _funds()
     if not funds:
         st.info("Fon kataloğu boş — `config/funds.yaml` dosyasını kontrol et.")
@@ -101,47 +173,32 @@ def render(principal: float) -> None:
     withholding = resolve_fund_withholding(fund["is_equity_heavy"])
     price_end_date, price_end = max(prices, key=lambda p: p[0])
 
-    rows = []
-    comparison_sources: set[str] = set()
-    for label, days_back in SCENARIOS:
-        target = price_end_date - timedelta(days=days_back)
-        try:
-            price_start_date, price_start = nearest_prior_price(prices, target)
-        except ValueError:
-            continue
-        sim = simulate(
-            FundSimInput(
-                principal=principal,
-                price_start=price_start,
-                price_end=price_end,
-                date_start=price_start_date,
-                date_end=price_end_date,
-                withholding_rate=withholding,
-                is_equity_heavy=fund["is_equity_heavy"],
-            )
-        )
-        comparison = _deposit_comparison(principal, days_back)
-        deposit_net = comparison[0] if comparison else None
-        if comparison:
-            comparison_sources.add(comparison[1])
-        rows.append(
-            {
-                "Senaryo": label,
-                "Başlangıç tarihi": price_start_date.isoformat(),
-                "Başlangıç fiyatı": price_start,
-                "Bugünkü fiyat": price_end,
-                "Brüt getiri": round(sim.gross_return, 2),
-                "Net getiri (fon)": round(sim.net_return, 2),
-                "Net getiri (TL mevduat, kıyas)": round(deposit_net, 2) if deposit_net is not None else None,
-                "Vade sonu değer": round(sim.maturity_value, 2),
-            }
-        )
+    rows, comparison_sources = _scenario_rows(
+        prices, price_end_date, price_end, principal, withholding,
+        fund["is_equity_heavy"],
+    )
 
     if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        # BİRİM SÜTUN BAŞLIĞINDA, BASAMAK AYIRICI ZORUNLU. Başlıklar
+        # birimsizken tablo `412923.6` gösteriyordu ve bunun TL mi yüzde mi
+        # olduğu okunmuyordu (inceleme, 2026-09-08) — fon getirisi yüzde
+        # olarak da gösterilebilen bir büyüklük olduğu için tahmin işe
+        # yaramıyor. `gross_return` bir TUTAR (`core/fund.py`: dönem sonu
+        # değer eksi anapara), yüzde değil.
+        st.dataframe(
+            pd.DataFrame(rows).style.format(
+                {sutun: "{:,.6f}" for sutun in FIYAT_SUTUNLARI}
+                | {sutun: "{:,.2f}" for sutun in TUTAR_SUTUNLARI},
+                # Mevduat kıyası toplanmamışsa boş gelir; biçimleyici onu
+                # varsayılan olarak "nan" yazardı, bu da veri gibi görünür.
+                na_rep="—",
+            ),
+            width="stretch",
+            hide_index=True,
+        )
         if fund["is_equity_heavy"]:
             st.caption("Hisse yoğun fon — stopajdan muaf.")
-        if all(r["Net getiri (TL mevduat, kıyas)"] is None for r in rows):
+        if all(r["Net getiri, TL mevduat kıyası (TL)"] is None for r in rows):
             st.caption(
                 "Mevduat kıyas sütunu boş — banka bazlı mevduat oranı henüz toplanmadı "
                 "(`python worker.py deposits`)."
@@ -197,7 +254,7 @@ def render(principal: float) -> None:
         price_df, x="Tarih", y=value_label,
         title=f"{fund['code']} — {'fiyat serisi' if unit_value else 'endeks serisi'}",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     _render_add_fund()
 

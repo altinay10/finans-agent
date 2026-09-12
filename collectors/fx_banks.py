@@ -131,7 +131,20 @@ class VakifBankParser:
         return vakifbank_common.call("/marketPrices", {}, scope="oob")
 
     def parse(self, raw: str) -> list[BankFxRecord]:
-        body = json.loads(raw)
+        # BOŞ/JSON OLMAYAN GÖVDE KORUMASI. Çıplak `json.loads` canlıda
+        # `Expecting value: line 1 column 1 (char 0)` yazıyordu (source_runs,
+        # 2026-09-08) ve bu mesaj hiçbir şey anlatmıyor: gövde boş mu geldi,
+        # token akışı mı düştü, araya bir engel sayfası mı girdi — hepsi
+        # aynı görünüyor. Asıl kazanç sağlamlık değil, TEŞHİS EDİLEBİLİRLİK;
+        # gövdenin başı hataya yazılınca sebep tek bakışta anlaşılıyor.
+        if not raw or not raw.strip():
+            raise ParseError("VakıfBank boş gövde döndürdü")
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ParseError(
+                f"VakıfBank yanıtı JSON değil ({exc.msg}); ilk 80 karakter: {raw[:80]!r}"
+            ) from exc
         records = []
         for row in body.get("Data", {}).get("Currency", []):
             code = row.get("CurrencyCode")
