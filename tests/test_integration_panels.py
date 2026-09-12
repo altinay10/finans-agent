@@ -702,3 +702,117 @@ def test_principal_input_keeps_last_amount_when_box_emptied():
         assert common.principal_input("kredi") == 750_000
 
 
+# --------------------------------------------------- döviz: TCMB karşılığı ----
+
+
+def _fx_frame():
+    """Döviz panelinin `render` içinde kurduğu çerçevenin asgari hâli."""
+    import pandas as pd
+
+    an = datetime(2026, 9, 10, 8, 0, tzinfo=timezone.utc)
+    return pd.DataFrame(
+        [
+            {"institution": "TCMB", "currency": "USD", "buy": 40.0, "sell": 40.0,
+             "quoted_at": an, "is_fresh": True},
+            {"institution": "TCMB", "currency": "EUR", "buy": 50.0, "sell": 50.0,
+             "quoted_at": an, "is_fresh": True},
+            {"institution": "AKBANK", "currency": "USD", "buy": 39.0, "sell": 41.0,
+             "quoted_at": an, "is_fresh": True},
+        ]
+    )
+
+
+def test_fx_conversion_uses_tcmb_sell_rate_only():
+    """Karşılık TCMB SATIŞ kurundan hesaplanır, banka kotasyonu karışmaz.
+
+    Bankaya göre değişen bir cevap ("1 milyon TL kaç dolar") panelde tek bir
+    sayı olarak gösterilemez; hesabın tabanı resmî çapa olmalı.
+    """
+    from app.panels.fx import tcmb_conversion
+
+    sonuc = tcmb_conversion(_fx_frame(), 1_000_000)
+
+    assert list(sonuc["currency"]) == ["EUR", "USD"]
+    assert dict(zip(sonuc["currency"], sonuc["converted"])) == pytest.approx(
+        {"EUR": 20_000.0, "USD": 25_000.0}
+    )
+
+
+def test_fx_conversion_skips_broken_rate_rows():
+    """Satış kuru sıfır gelen satır elenir — bölme hatası paneli çökertmesin."""
+    from app.panels.fx import tcmb_conversion
+
+    df = _fx_frame()
+    df.loc[df["currency"] == "EUR", "sell"] = 0.0
+
+    sonuc = tcmb_conversion(df, 1_000_000)
+
+    assert list(sonuc["currency"]) == ["USD"]
+
+
+def test_fx_conversion_empty_when_no_tcmb_quote():
+    """TCMB kuru yoksa banka kuruyla hesap YAPILMAZ, tablo boş döner."""
+    from app.panels.fx import tcmb_conversion
+
+    df = _fx_frame()
+    df = df[df["institution"] != "TCMB"]
+
+    assert tcmb_conversion(df, 1_000_000).empty
+
+
+# --------------------------------------------- döviz: kuruma göre tazelik ----
+
+def test_tcmb_is_not_called_stale_after_a_few_hours():
+    """TCMB gösterge kurunu GÜNDE BİR yayımlıyor; 2 saatlik sınır ona haksız.
+
+    Canlı gözlem (2026-09-08): panel TCMB satırını "2 saatten eski —
+    kotasyon bayat olabilir (Yaş: 20,5 saat)" diye soluk gösteriyordu.
+    Veri o günün RESMÎ kuruydu; sürekli görünen bu uyarı, gerçekten
+    bayatlayan günü de görünmez kılıyordu.
+    """
+    from app.panels.fx import STALE_HOURS, stale_hours
+
+    yas = 20.5
+    assert yas > STALE_HOURS, "ticari banka sınırı gerçekten aşılmalı (test tautoloji değil)"
+    assert yas <= stale_hours("TCMB")
+    assert yas > stale_hours("VAKIFBANK"), "banka kotasyonu için sınır gevşememeli"
+
+
+def test_bank_quotes_keep_the_tight_threshold():
+    """TCMB istisnası diğer kurumlara sızmamalı."""
+    from app.panels.fx import STALE_HOURS, stale_hours
+
+    for kurum in ("VAKIFBANK", "ZIRAAT", "ENPARA", "bilinmeyen-kurum"):
+        assert stale_hours(kurum) == STALE_HOURS
+
+
+def test_tcmb_threshold_is_read_from_the_scheduler_not_copied(monkeypatch):
+    """Panel eşiği zamanlayıcıdan OKUMALI, kendi kopyasını tutmamalı.
+
+    `scheduler.MAX_AGE_HOURS["fx_tcmb"]` "bu veriyi yeniden çekmeli miyim"
+    diye soruyor, panel "bunu bayat göstermeli miyim" diye — ikisi de aynı
+    gerçeğe (TCMB günde bir yayımlar) dayanıyor. İkinci bir kopya, biri
+    değişince sessizce kayardı: panel bayat derken zamanlayıcı hiçbir şey
+    yapmazdı. Eşitliği doğrulamak yetmezdi (iki sabit tesadüfen eşit
+    olabilir), bu yüzden zamanlayıcının değeri DEĞİŞTİRİLİP panelin onu
+    izlediği görülüyor.
+    """
+    import scheduler
+    from app.panels.fx import stale_hours
+
+    monkeypatch.setitem(scheduler.MAX_AGE_HOURS, "fx_tcmb", 42)
+    assert stale_hours("TCMB") == 42
+
+
+def test_tcmb_threshold_covers_a_full_publication_cycle():
+    """Sınır, TCMB'nin yayım aralığından kısa olmamalı.
+
+    TCMB iş günlerinde günde bir kez yayımlıyor; 24 saatin altındaki bir
+    sınır günün bir bölümünde her zaman "bayat" demek olurdu — düzeltilen
+    hatanın tam kendisi.
+    """
+    from app.panels.fx import stale_hours
+
+    assert stale_hours("TCMB") >= 24
+
+
