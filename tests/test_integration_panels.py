@@ -623,6 +623,51 @@ def test_daily_coverage_flags_a_sparse_series_but_not_a_daily_one():
     assert _daily_coverage([(son, 1.0)]) is None
 
 
+# ------------------------------------------- fon tablosu: birim ve biçim ----
+
+def test_scenario_columns_carry_their_unit(seeded_db):
+    """Para sütunu başlığı birimini SÖYLEMELİ.
+
+    Canlıda tablo `412923.6` gösteriyordu (inceleme, 2026-09-08) ve bunun
+    TL mi yüzde mi olduğu okunmuyordu. Fon getirisi yüzde olarak da
+    sunulabilen bir büyüklük olduğu için tahmin işe yaramıyor — oysa
+    `core.fund.simulate` bir TUTAR döndürüyor.
+    """
+    from app.panels.fund import FIYAT_SUTUNLARI, TUTAR_SUTUNLARI, _scenario_rows, _try_deposit_rates
+
+    _try_deposit_rates.clear()
+    son = date(2026, 9, 4)
+    prices = [(son - timedelta(days=k), 10.0 + k * 0.01) for k in range(0, 400)]
+
+    rows, _ = _scenario_rows(prices, son, 10.0, 1_000_000, 0.15, False)
+    assert rows, "senaryolar üretilmeliydi"
+
+    para_sutunlari = set(FIYAT_SUTUNLARI) | set(TUTAR_SUTUNLARI)
+    # Biçimlendirilen sütunların HEPSİ tabloda gerçekten var mı? (Ad
+    # değişip biçimleyici sessizce devre dışı kalmasın.)
+    assert para_sutunlari <= set(rows[0])
+    # Ve tabloda birimsiz kalmış bir para sütunu yok mu?
+    for sutun in rows[0]:
+        if sutun in ("Senaryo", "Başlangıç tarihi"):
+            continue
+        assert sutun.endswith("(TL)"), f"{sutun!r} birimini söylemiyor"
+
+
+def test_gross_return_is_an_amount_not_a_percentage(seeded_db):
+    """Başlığın '(TL)' demesi ancak sayı GERÇEKTEN tutarsa doğru olur."""
+    from app.panels.fund import _scenario_rows, _try_deposit_rates
+
+    _try_deposit_rates.clear()
+    son = date(2026, 9, 4)
+    # Fiyat iki katına çıkmış: 100.000 anaparada brüt getiri 100.000 TL,
+    # yüzde olsaydı 100 olurdu.
+    prices = [(son - timedelta(days=40), 1.0), (son, 2.0)]
+
+    rows, _ = _scenario_rows(prices, son, 2.0, 100_000, 0.15, False)
+    ay = next(r for r in rows if r["Senaryo"] == "1 ay")
+    assert ay["Brüt getiri (TL)"] == pytest.approx(100_000)
+
+
 # ------------------------------------------------------- anapara kutusu ----
 
 
@@ -637,6 +682,29 @@ def test_principal_input_label_has_no_currency_unit():
     from app.panels.common import PRINCIPAL_LABEL
 
     assert PRINCIPAL_LABEL == "Anapara"
+
+
+def test_principal_box_only_in_panels_that_use_the_amount():
+    """Kutu tutarla işi olan dört sekmede var, diğerlerinde yok.
+
+    Kaynak denetleniyor çünkü kutuyu çizmek Streamlit çalıştırmak demek;
+    kilitlenen kural ise yerleşim: Agent, Kaynaklar, Kayıtlar ve durum
+    şeridi tutarı hiç kullanmıyor, orada bir anapara kutusu görünmemeli.
+    Kutu ayrıca sekmelerin ÜSTÜNDE (app/main.py) değil, sekmelerin İÇİNDE.
+    """
+    from pathlib import Path
+
+    panels = Path(__file__).resolve().parent.parent / "app" / "panels"
+    kullanan = {"fx.py", "deposit.py", "loan.py", "fund.py"}
+    kullanmayan = {"agent.py", "sources.py", "logs.py", "status.py"}
+
+    for ad in kullanan:
+        assert "principal_input(" in (panels / ad).read_text(encoding="utf-8"), ad
+    for ad in kullanmayan:
+        assert "principal_input(" not in (panels / ad).read_text(encoding="utf-8"), ad
+
+    ana = (panels.parent / "main.py").read_text(encoding="utf-8")
+    assert "st.text_input(" not in ana
 
 
 def test_principal_boxes_share_one_amount(monkeypatch):

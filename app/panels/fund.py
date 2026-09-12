@@ -19,6 +19,19 @@ from store import queries
 
 SCENARIOS = [("1 ay", 30), ("6 ay", 182), ("1 yıl", 365)]
 
+#: Senaryo tablosundaki para sütunları — başlıkta birim, gösterimde ayırıcı.
+#
+# FİYAT ve TUTAR AYRI: fon pay fiyatı çoğu fonda 0,0xxxxx mertebesinde;
+# iki basamağa yuvarlamak onu `0,05` yapıp bilgiyi tamamen siler. Tutarlar
+# ise yedi haneye çıkıyor, orada basamak ayırıcısı olmadan okunmuyor.
+FIYAT_SUTUNLARI = ("Başlangıç fiyatı (TL)", "Bugünkü fiyat (TL)")
+TUTAR_SUTUNLARI = (
+    "Brüt getiri (TL)",
+    "Net getiri, fon (TL)",
+    "Net getiri, TL mevduat kıyası (TL)",
+    "Vade sonu değer (TL)",
+)
+
 
 @st.cache_data(ttl=300)
 def _funds() -> list[dict]:
@@ -121,20 +134,71 @@ def _scenario_rows(
             {
                 "Senaryo": label,
                 "Başlangıç tarihi": price_start_date.isoformat(),
-                "Başlangıç fiyatı": price_start,
-                "Bugünkü fiyat": price_end,
-                "Brüt getiri": round(sim.gross_return, 2),
-                "Net getiri (fon)": round(sim.net_return, 2),
-                "Net getiri (TL mevduat, kıyas)": round(deposit_net, 2) if deposit_net is not None else None,
-                "Vade sonu değer": round(sim.maturity_value, 2),
+                "Başlangıç fiyatı (TL)": price_start,
+                "Bugünkü fiyat (TL)": price_end,
+                "Brüt getiri (TL)": round(sim.gross_return, 2),
+                "Net getiri, fon (TL)": round(sim.net_return, 2),
+                "Net getiri, TL mevduat kıyası (TL)": (
+                    round(deposit_net, 2) if deposit_net is not None else None
+                ),
+                "Vade sonu değer (TL)": round(sim.maturity_value, 2),
             }
         )
+    return rows, comparison_sources
+
+
+def render() -> None:
+    st.subheader("Fon Simülasyonu")
+    # Fon simülasyonu tutarı her koşulda TL sayar (fon pay fiyatları TL).
+    principal = principal_input("fon")
+    st.caption("Yatırılacak tutar **TL** kabul edilir.")
+    funds = _funds()
+    if not funds:
+        st.info("Fon kataloğu boş — `config/funds.yaml` dosyasını kontrol et.")
+        _render_add_fund()
+        return
+
+    fund = st.selectbox("Fon", funds, format_func=lambda f: f"{f['code']} — {f['name']}")
+    today = date.today()
+    prices = _price_series(fund["code"], today - timedelta(days=400), today)
+
+    if not prices:
+        st.info(
+            f"{fund['code']} için son 400 günde fiyat verisi yok. Fiyatlar sağlayıcı "
+            "adaptörlerinden toplanır: `python worker.py funds`"
+        )
+        _render_add_fund()
+        return
+
+    withholding = resolve_fund_withholding(fund["is_equity_heavy"])
+    price_end_date, price_end = max(prices, key=lambda p: p[0])
+
+    rows, comparison_sources = _scenario_rows(
+        prices, price_end_date, price_end, principal, withholding,
+        fund["is_equity_heavy"],
+    )
 
     if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        # BİRİM SÜTUN BAŞLIĞINDA, BASAMAK AYIRICI ZORUNLU. Başlıklar
+        # birimsizken tablo `412923.6` gösteriyordu ve bunun TL mi yüzde mi
+        # olduğu okunmuyordu (inceleme, 2026-09-08) — fon getirisi yüzde
+        # olarak da gösterilebilen bir büyüklük olduğu için tahmin işe
+        # yaramıyor. `gross_return` bir TUTAR (`core/fund.py`: dönem sonu
+        # değer eksi anapara), yüzde değil.
+        st.dataframe(
+            pd.DataFrame(rows).style.format(
+                {sutun: "{:,.6f}" for sutun in FIYAT_SUTUNLARI}
+                | {sutun: "{:,.2f}" for sutun in TUTAR_SUTUNLARI},
+                # Mevduat kıyası toplanmamışsa boş gelir; biçimleyici onu
+                # varsayılan olarak "nan" yazardı, bu da veri gibi görünür.
+                na_rep="—",
+            ),
+            width="stretch",
+            hide_index=True,
+        )
         if fund["is_equity_heavy"]:
             st.caption("Hisse yoğun fon — stopajdan muaf.")
-        if all(r["Net getiri (TL mevduat, kıyas)"] is None for r in rows):
+        if all(r["Net getiri, TL mevduat kıyası (TL)"] is None for r in rows):
             st.caption(
                 "Mevduat kıyas sütunu boş — banka bazlı mevduat oranı henüz toplanmadı "
                 "(`python worker.py deposits`)."
