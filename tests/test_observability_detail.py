@@ -343,6 +343,71 @@ def test_schema_drift_needs_history_before_it_can_judge(db):
     assert schema_drift() == []
 
 
+def test_schema_drift_waits_for_three_prior_runs(db):
+    """İki koşuluk geçmişten çıkarılan taban aykırı değere fazla açık."""
+    from store.queries import schema_drift
+
+    with SessionLocal() as s:
+        for rows in (100, 100):
+            r = _source_run("deposit_rates", "teb", "ok", 100, phase="parse")
+            r.rows = rows
+            s.add(r)
+        latest = _source_run("deposit_rates", "teb", "ok", 5, phase="parse")
+        latest.rows = 10          # %90 düşüş — ama geçmiş yeterli değil
+        s.add(latest)
+        s.commit()
+
+    assert schema_drift() == []
+
+
+def test_schema_drift_ignores_the_seeding_run_of_a_windowed_collector(db):
+    """Tohumlama koşusu bozulma değil; medyan onu yutmalı.
+
+    Canlı senaryo (2026-09-08): Yapı Kredi Portföy ilk koşusunda bir yıllık
+    omurgayı çekip ~99 nokta yazdı, sonraki koşularda yalnızca 28 günlük
+    pencereyi güncelleyip ~20 nokta yazıyor. Ortalama tabanla bu, her koşuda
+    "%50 düşüş" alarmı demekti — aşağıdaki `ortalama` hesabı o eski
+    davranışın hâlâ alarm üreteceğini gösteriyor, yani bu test medyanın
+    gerçekten fark yarattığını kanıtlıyor, tesadüfen geçmiyor.
+    """
+    from store.queries import schema_drift
+
+    onceki = (99, 20, 20, 20)
+    with SessionLocal() as s:
+        for rows in onceki:
+            r = _source_run("fund_prices", "YPT", "ok", 100, phase="parse")
+            r.rows = rows
+            s.add(r)
+        latest = _source_run("fund_prices", "YPT", "ok", 5, phase="parse")
+        latest.rows = 19
+        s.add(latest)
+        s.commit()
+
+    ortalama = sum(onceki) / len(onceki)
+    assert (ortalama - 19) / ortalama >= 0.40, "eski davranış alarm vermeliydi"
+    assert schema_drift() == []
+
+
+def test_schema_drift_still_catches_a_collapse_after_seeding(db):
+    """Medyan tohumlamayı yutuyor ama GERÇEK çöküşü yutmamalı."""
+    from store.queries import schema_drift
+
+    with SessionLocal() as s:
+        for rows in (99, 20, 20, 20):
+            r = _source_run("fund_prices", "YPT", "ok", 100, phase="parse")
+            r.rows = rows
+            s.add(r)
+        latest = _source_run("fund_prices", "YPT", "ok", 5, phase="parse")
+        latest.rows = 5           # pencere 20 satırken 5'e düştü
+        s.add(latest)
+        s.commit()
+
+    alerts = schema_drift()
+    assert len(alerts) == 1
+    assert alerts[0]["baseline_rows"] == 20    # 39.75 değil
+    assert alerts[0]["drop_pct"] == 75.0
+
+
 # --------------------------------------------------- oran değişim / donma ----
 
 def test_first_run_records_every_series_as_new(db):

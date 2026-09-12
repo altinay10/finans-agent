@@ -169,7 +169,7 @@ def _render_alerts(days: int) -> None:
     if drift:
         lines = [
             f"**{d['collector']}/{d['source']}** — son koşuda {d['latest_rows']} satır, "
-            f"önceki ortalama {d['baseline_rows']} (%{d['drop_pct']} düşüş)"
+            f"önceki medyan {d['baseline_rows']} (%{d['drop_pct']} düşüş)"
             for d in drift
         ]
         st.warning(
