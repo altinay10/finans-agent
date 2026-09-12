@@ -114,6 +114,35 @@ def test_vakifbank_parser_maps_sale_and_purchase_correctly():
     assert usd.buy < usd.sell
 
 
+def test_vakifbank_parser_names_the_reason_when_the_body_is_empty():
+    """Boş gövde ANLAŞILIR bir hata bırakmalı.
+
+    Çıplak `json.loads` canlıda `Expecting value: line 1 column 1 (char 0)`
+    yazıyordu (source_runs, 2026-09-08). O mesaj gövdenin boş mu geldiğini,
+    token akışının mı düştüğünü, araya engel sayfası mı girdiğini
+    ayırmıyor; kaydı okuyan kişi hiçbir şey öğrenmiyor.
+    """
+    from collectors.base import ParseError
+    from collectors.fx_banks import VakifBankParser
+
+    for govde in ("", "   "):
+        with pytest.raises(ParseError, match="boş gövde"):
+            VakifBankParser().parse(govde)
+
+
+def test_vakifbank_parser_quotes_the_body_when_it_is_not_json():
+    """Gövdenin başı hataya yazılmalı — sebep tek bakışta görünsün."""
+    from collectors.base import ParseError
+    from collectors.fx_banks import VakifBankParser
+
+    with pytest.raises(ParseError) as hata:
+        VakifBankParser().parse("<html><title>Access Denied</title>")
+
+    mesaj = str(hata.value)
+    assert "JSON değil" in mesaj
+    assert "Access Denied" in mesaj, "gövdenin başı mesajda geçmeli"
+
+
 def test_bank_fx_record_rejects_inverted_spread():
     from collectors.fx_banks import BankFxRecord
 
