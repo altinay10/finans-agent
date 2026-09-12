@@ -32,7 +32,7 @@ import streamlit as st
 
 import llm.settings as settings
 from app.panels.common import ISTANBUL, as_utc, llm_call_description
-from llm import credentials
+from llm import credentials, providers
 from store import app_settings, queries
 
 SESSION_KEY = "agent_api_key"
@@ -145,9 +145,9 @@ def render() -> None:
     )
 
     _render_state(kaynak)
+    _render_silme_kodu()
     _render_key_form(kaynak)
     _render_saved_keys()
-    _render_pricing()
     st.divider()
     _render_run()
     st.divider()
@@ -258,6 +258,119 @@ def _render_state(kaynak: str) -> None:
 
 # ----------------------------------------------------------- giriş ----
 
+#: Giriş formunun oturum durumu anahtarları. Kutular `key=` ile
+#: bağlandığı için değerleri burada yaşıyor: form gönderildikten sonra da
+#: yerinde kalmalarının (ve yalnızca BAŞARIDA temizlenmelerinin) yolu bu.
+#: En son üretilen silme kodu — kaydettikten sonraki yeniden
+#: çalıştırmada bir kez gösterilip düşürülüyor.
+SON_SILME_KODU = "agent_son_silme_kodu"
+
+PROVIDER_KEY = "agent_saglayici"
+FORM_KEY = "agent_form_anahtar"
+FORM_BASE_URL = "agent_form_base_url"
+FORM_MODEL = "agent_form_model"
+FORM_EXTRA = "agent_form_extra"
+FORM_PRICE_IN = "agent_form_fiyat_girdi"
+FORM_PRICE_OUT = "agent_form_fiyat_cikti"
+
+#: Fiyat kutularının varsayılanı (USD / 1M token). Kullanıcı isteği
+#: (2026-09-12): boş bırakmak yerine makul bir başlangıç göster, böylece
+#: maliyet sütunu "bilinmiyor" olarak kalmasın.
+VARSAYILAN_GIRDI_FIYAT = 1.0
+VARSAYILAN_CIKTI_FIYAT = 5.0
+
+
+def _render_silme_kodu() -> None:
+    """Son kaydedilen anahtarın silme kodunu BİR KEZ gösterir.
+
+    Sunucuda yalnızca kodun özeti duruyor (bkz. llm/credentials.py), yani
+    bu kutu bir daha çizilmezse kod panelden geri okunamaz. Kullanıcı
+    "Gördüm" deyip kapatana kadar ekranda kalıyor — yeniden çalıştırmalar
+    arasında kaybolsaydı, kod da kaybolurdu.
+    """
+    kayit = st.session_state.get(SON_SILME_KODU)
+    if not kayit:
+        return
+    _kimlik, kod = kayit
+    st.warning(
+        f"**Bu anahtarın silme kodu: `{kod}`**\n\n"
+        "Bir yere kaydet. Bu kodu bilen dışında kimse bu anahtarı silemez — "
+        "sunucuda yalnızca kodun özeti tutuluyor, panelden geri okunamaz. "
+        "Kaybedersen sunucudaki `data/llm_credentials.json` dosyasından "
+        "okuyabilirsin."
+    )
+    if st.button("Gördüm, kapat", key="silme_kodu_kapat"):
+        st.session_state.pop(SON_SILME_KODU, None)
+        st.rerun()
+
+
+def _varsayilan_saglayici() -> str:
+    """Form ilk açıldığında seçili gelecek sağlayıcı.
+
+    O an geçerli olan taban URL'ye bakılıyor: kullanıcı zaten Gemini
+    kullanıyorsa listeyi Gemini'de açmak, her seferinde yeniden seçmesini
+    engelliyor.
+    """
+    return providers.guess_label(settings.current_base_url())
+
+
+def _saglayici_degisti() -> None:
+    """Sağlayıcı seçilince kutuları o sağlayıcının değerleriyle doldurur.
+
+    EK GÖVDE DE SIFIRLANIYOR ve asıl düzeltme bu: kutu daha önce o an
+    geçerli olan ayardan dolduruluyordu, yani `.env`'de Qwen'e ait
+    `{"enable_thinking": false}` varken Gemini anahtarı denemek isteyen
+    kullanıcı o alanı farkında olmadan Gemini'ye gönderiyor ve "anahtar
+    çalışmadı" hatası alıyordu (kullanıcı bildirimi, 2026-09-12).
+
+    'Diğer / elle' seçilirse kutulara dokunulmuyor: kullanıcı kendi
+    yazdıklarını kaybetmesin.
+    """
+    onayar = providers.by_label(st.session_state.get(PROVIDER_KEY, providers.CUSTOM))
+    if onayar.label == providers.CUSTOM:
+        return
+    st.session_state[FORM_BASE_URL] = onayar.base_url
+    st.session_state[FORM_MODEL] = onayar.model
+    st.session_state[FORM_EXTRA] = json.dumps(onayar.extra_body) if onayar.extra_body else ""
+
+
+def _form_alanlarini_hazirla() -> None:
+    """Kutuların oturum durumundaki ilk değerlerini kurar (bir kez)."""
+    if PROVIDER_KEY not in st.session_state:
+        st.session_state[PROVIDER_KEY] = _varsayilan_saglayici()
+    varsayilanlar = {
+        FORM_KEY: "",
+        FORM_BASE_URL: settings.current_base_url(),
+        FORM_MODEL: settings.current_model(),
+        FORM_EXTRA: (
+            json.dumps(settings.current_extra_body())
+            if settings.current_extra_body() else ""
+        ),
+    }
+    for ad, deger in varsayilanlar.items():
+        st.session_state.setdefault(ad, deger)
+
+    # Fiyat: kayıtlı değer varsa O, yoksa varsayılan. Kayıtlıyı ezmek,
+    # bilinçli girilmiş bir fiyatı sessizce geri alırdı.
+    kayitli_girdi, kayitli_cikti = app_settings.price_rates()
+    st.session_state.setdefault(
+        FORM_PRICE_IN, VARSAYILAN_GIRDI_FIYAT if kayitli_girdi is None else kayitli_girdi
+    )
+    st.session_state.setdefault(
+        FORM_PRICE_OUT, VARSAYILAN_CIKTI_FIYAT if kayitli_cikti is None else kayitli_cikti
+    )
+
+
+def _formu_temizle() -> None:
+    """Kutuları BAŞARILI kayıttan sonra temizler.
+
+    Yalnızca anahtar siliniyor; taban URL, model ve ek gövde duruyor çünkü
+    kullanıcı büyük olasılıkla aynı sağlayıcıyla devam edecek. Fiyat da
+    duruyor: az önce kaydedilen değerin kutuda kalması doğru geri bildirim.
+    """
+    st.session_state[FORM_KEY] = ""
+
+
 def _render_key_form(kaynak: str) -> None:
     """Anahtar + SAĞLAYICI girişi ve iki kaydetme yolu.
 
@@ -277,10 +390,35 @@ def _render_key_form(kaynak: str) -> None:
     "anahtar var ama hiçbir şey çalışmıyor" durumuna sokar; teşhisi zordur
     çünkü panel anahtarı gösterirken koşular sessizce başarısız olur.
     """
-    with st.form("agent_key", clear_on_submit=True):
+    _form_alanlarini_hazirla()
+
+    # SAĞLAYICI SEÇİMİ FORMUN DIŞINDA: form içindeki bir seçim ancak
+    # gönderildiğinde okunur, yani seçtiğin anda diğer kutuları dolduramaz.
+    # Dışarıda olunca seçim anında yeniden çalıştırma tetikliyor ve kutular
+    # o sağlayıcının değerleriyle geliyor.
+    secili = st.selectbox(
+        "Sağlayıcı",
+        providers.LABELS,
+        key=PROVIDER_KEY,
+        on_change=_saglayici_degisti,
+        help="Seçince taban URL, örnek model ve ek gövde alanı o "
+             "sağlayıcıya göre doldurulur. Hepsi düzenlenebilir.",
+    )
+    onayar = providers.by_label(secili)
+    if onayar.note:
+        st.caption(onayar.note)
+
+    # clear_on_submit=False — BU BİR HATA DÜZELTMESİ. Form her gönderimde
+    # temizleniyordu; anahtar reddedildiğinde kullanıcı taban URL'yi,
+    # modeli ve ek gövdeyi BAŞTAN yazmak zorunda kalıyordu, oysa
+    # düzeltilecek tek şey genelde bir karakterdi. Artık yazılanlar yerinde
+    # kalıyor; kutular yalnızca BAŞARILI kayıttan sonra temizleniyor
+    # (bkz. aşağıdaki `_formu_temizle`).
+    with st.form("agent_key", clear_on_submit=False):
         girilen = st.text_input(
             "API anahtarı",
             type="password",
+            key=FORM_KEY,
             placeholder="AIzaSy… veya sağlayıcının verdiği anahtar",
             help="Yazdığın anahtar ekranda görünmez ve hiçbir yere gönderilmez; "
                  "yalnızca seçtiğin LLM sağlayıcısına gider.",
@@ -288,23 +426,43 @@ def _render_key_form(kaynak: str) -> None:
         c1, c2 = st.columns(2)
         base_url = c1.text_input(
             "Taban URL (OpenAI uyumlu uç nokta)",
-            value=settings.current_base_url(),
-            help="Sağlayıcıyı bu belirler. Gemini, DeepSeek, Qwen ve yerel "
-                 "Ollama'nın hepsi OpenAI uyumlu uç nokta veriyor.",
+            key=FORM_BASE_URL,
+            help="Sağlayıcıyı bu belirler. Gemini, OpenAI, Claude, Qwen, "
+                 "DeepSeek ve yerel Ollama'nın hepsi OpenAI uyumlu uç nokta veriyor.",
         )
         model = c2.text_input(
             "Model",
-            value=settings.current_model(),
+            key=FORM_MODEL,
             help="Model herhangi biri olabilir; sağlayıcının verdiği adı yaz.",
         )
         extra_ham = st.text_input(
             "Ek gövde alanları (isteğe bağlı, JSON)",
-            value=json.dumps(settings.current_extra_body()) if settings.current_extra_body() else "",
-            placeholder='{"enable_thinking": false}',
+            key=FORM_EXTRA,
+            placeholder="{}",
             help="Sağlayıcıya özel, OpenAI şemasında olmayan alanlar. "
-                 "QWEN KULLANIYORSAN `{\"enable_thinking\": false}` yaz — düşünme "
-                 "modu varsayılan açık ve çıkarım işinde token yakar.",
+                 "ÇOĞU SAĞLAYICIDA BOŞ OLMALI — listedeki sağlayıcılar arasında "
+                 "yalnızca Qwen bir alan istiyor. Buraya Qwen'e özel alanı "
+                 "bırakıp Gemini anahtarı denemek, anahtar doğru olsa bile "
+                 "isteğin reddedilmesine yol açar.",
         )
+
+        # FİYAT ARTIK BURADA. Ayrı bir "Birim fiyat" bölümü vardı ve
+        # kullanıcı anahtarı girdikten sonra onu ayrıca açıp doldurmak
+        # zorundaydı; doldurmayınca maliyet "bilinmiyor" kalıyordu. Fiyat
+        # anahtarın sağlayıcısına ait bir bilgi, o yüzden anahtarla birlikte
+        # soruluyor (kullanıcı isteği, 2026-09-12).
+        f1, f2 = st.columns(2)
+        girdi_fiyat = f1.number_input(
+            "Girdi fiyatı (USD / 1M token)",
+            min_value=0.0, step=0.10, format="%.4f", key=FORM_PRICE_IN,
+            help="Sağlayıcının fiyat sayfasındaki değer. 0 yazmak 'bedava' "
+                 "demektir ve ücretsiz katmanda bu doğrudur.",
+        )
+        cikti_fiyat = f2.number_input(
+            "Çıktı fiyatı (USD / 1M token)",
+            min_value=0.0, step=0.10, format="%.4f", key=FORM_PRICE_OUT,
+        )
+
         b1, b2 = st.columns(2)
         oturumluk = b1.form_submit_button(
             "Yalnızca bu oturumda kullan", width="stretch"
@@ -346,9 +504,16 @@ def _render_key_form(kaynak: str) -> None:
                 "doğru olsa bile yanlış uç noktaya gönderilirse reddedilir."
             )
             return
-        cred = credentials.save(
+        cred, silme_kodu = credentials.save(
             anahtar, base_url=base_url, model=model, extra_body=extra_body
         )
+        # Fiyat anahtarla birlikte kaydediliyor (bkz. formdaki not).
+        app_settings.set_price_rates(float(girdi_fiyat), float(cikti_fiyat))
+        # SİLME KODU BİR KEZ GÖSTERİLİYOR. Sunucuda yalnızca özeti var,
+        # yani bu kutu kapandıktan sonra kodu hiçbir yerden geri okunamaz
+        # (kurtarma yolu: data/llm_credentials.json).
+        st.session_state[SON_SILME_KODU] = (cred.id, silme_kodu)
+        _formu_temizle()
         # Oturumluk anahtar kalıcı olanı gizlerdi: kullanıcı "kaydettim ama
         # eskisi kullanılıyor" durumuna düşerdi.
         for anahtar_adi in (SESSION_KEY, SESSION_BASE_URL, SESSION_MODEL, SESSION_EXTRA_BODY):
@@ -378,6 +543,8 @@ def _render_key_form(kaynak: str) -> None:
         st.session_state[SESSION_BASE_URL] = base_url.strip()
         st.session_state[SESSION_MODEL] = model.strip()
         st.session_state[SESSION_EXTRA_BODY] = extra_body
+        app_settings.set_price_rates(float(girdi_fiyat), float(cikti_fiyat))
+        _formu_temizle()
         st.success(
             "Bu oturum için ayarlandı. Diske yazılmadı, başka bir oturum "
             "göremez, zamanlayıcı kullanmaz. **Agent'ı çalıştır** düğmesi "
@@ -496,63 +663,63 @@ def _render_saved_keys() -> None:
                 "sıradakine geçilir. Kotası yenilenirse ilk başarılı koşuda tekrar "
                 "`çalışıyor` olur — bu yüzden düşen anahtar silinmiyor, sona atılıyor."
             )
+        st.caption(
+            "🔒 **Bir anahtarı yalnızca onu ekleyen kişi silebilir.** Silmek "
+            "için kaydederken gösterilen kod gerekiyor; sunucuda o kodun "
+            "yalnızca özeti duruyor. Kodunu kaybettiysen sunucudaki "
+            "`data/llm_credentials.json` dosyasından okunabilir."
+        )
         for index, cred in enumerate(kayitlilar):
-            c1, c2, c3, c4 = st.columns([2, 3, 2, 1])
+            c1, c2, c3 = st.columns([3, 3, 2])
             if cred.status == "failed":
                 etiket = "🔴 düştü"
             elif index == 0 and not env_oncelikli:
                 etiket = "🟢 kullanılıyor"
             else:
                 etiket = "⚪ yedek"
-            c1.write(f"{etiket} · **{cred.masked}**")
+            c1.write(f"{etiket} · **{cred.masked}**" + (" 🔒" if cred.korumali else ""))
             c2.write(f"`{cred.model}`")
             c3.caption(cred.base_url.replace("https://", "")[:28])
-            if c4.button("Sil", key=f"sil_{cred.id}"):
-                credentials.delete(cred.id)
-                st.rerun()
+            _render_delete(cred)
             if cred.status == "failed" and cred.last_error:
                 st.caption(f"↳ {cred.last_error[:160]}")
 
 
-def _render_pricing() -> None:
-    """Token birim fiyatı — maliyetin hesaplanabilmesi için."""
-    girdi_fiyat, cikti_fiyat = app_settings.price_rates()
-    with st.expander("Birim fiyat (tahmini maliyet için)", expanded=girdi_fiyat is None):
-        st.caption(
-            "Sağlayıcının fiyat sayfasındaki değerleri gir: **USD / 1.000.000 "
-            "token**. Boş bırakılırsa maliyet *bilinmiyor* olarak gösterilir — "
-            "0 yazmak 'bedava' demektir ve ücretsiz katmanda bu doğrudur. "
-            "Kaydedilen fiyat veritabanında tutulur ve **bundan sonraki her "
-            "çağrının** maliyeti onunla hesaplanır."
-        )
-        with st.form("fiyat"):
-            c1, c2 = st.columns(2)
-            girdi = c1.number_input(
-                "Girdi (USD / 1M token)",
-                min_value=0.0, step=0.01, format="%.4f",
-                value=float(girdi_fiyat) if girdi_fiyat is not None else 0.0,
-            )
-            cikti = c2.number_input(
-                "Çıktı (USD / 1M token)",
-                min_value=0.0, step=0.01, format="%.4f",
-                value=float(cikti_fiyat) if cikti_fiyat is not None else 0.0,
-            )
-            k1, k2 = st.columns(2)
-            kaydet = k1.form_submit_button("Fiyatı kaydet", width="stretch")
-            temizle = k2.form_submit_button("Fiyatı temizle", width="stretch")
-        if kaydet:
-            app_settings.set_price_rates(girdi, cikti)
-            st.success(
-                f"Kaydedildi: girdi ${girdi:.4f} / çıktı ${cikti:.4f} (1M token). "
-                "Bundan sonraki çağrılar bu fiyatla hesaplanacak; **daha önceki "
-                "çağrıların maliyeti bilinmiyor olarak kalır** çünkü o an geçerli "
-                "fiyat kayıtlı değildi."
-            )
+def _render_delete(cred) -> None:
+    """Tek bir anahtarın silme denetimi.
+
+    KODU BİLEN AYNI OTURUMDA İKİ KEZ YAZMASIN: kaydeden kişinin kodu
+    oturum durumunda duruyor ve kutuya önceden dolduruluyor. Başka bir
+    tarayıcıdan gelen biri boş kutu görür ve kodu bilmiyorsa silemez —
+    korumanın bütün noktası bu.
+    """
+    if not cred.korumali:
+        # Bu koruma eklenmeden ÖNCE kaydedilmiş satır: sahibi bilinmiyor,
+        # kod sorulamaz. Aksi halde kimse silemez ve panelde kalıcı olarak
+        # takılı kalırdı.
+        if st.button("Sil", key=f"sil_{cred.id}"):
+            credentials.delete(cred.id)
             st.rerun()
-        if temizle:
-            app_settings.set_price_rates(None, None)
-            st.success("Fiyat temizlendi; maliyet yeniden *bilinmiyor* olarak gösterilecek.")
-            st.rerun()
+        return
+
+    d1, d2 = st.columns([3, 1])
+    kayitli = st.session_state.get(SON_SILME_KODU)
+    onceden = kayitli[1] if kayitli and kayitli[0] == cred.id else ""
+    kod = d1.text_input(
+        "Silme kodu",
+        value=onceden,
+        key=f"kod_{cred.id}",
+        label_visibility="collapsed",
+        placeholder="silme kodu",
+    )
+    if d2.button("Sil", key=f"sil_{cred.id}"):
+        try:
+            credentials.delete(cred.id, kod)
+        except credentials.NotAuthorized as exc:
+            st.error(f"{exc}")
+            return
+        st.rerun()
+
 
 
 # -------------------------------------------------------- çalıştır ----
