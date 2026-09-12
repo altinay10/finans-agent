@@ -31,8 +31,8 @@ LOAN_TYPE_LABELS = {"housing": "Konut", "vehicle": "Taşıt", "personal": "İhti
 
 
 @st.cache_data(ttl=300)
-def _rates(loan_type: str) -> list[dict]:
-    return queries.latest_loan_rates(loan_type)
+def _rates(loan_type: str, include_campaign: bool = False) -> list[dict]:
+    return queries.latest_loan_rates(loan_type, include_campaign=include_campaign)
 
 
 @st.cache_data(ttl=600)
@@ -98,10 +98,30 @@ def render() -> None:
     with col2:
         term_months = st.number_input("Vade (ay)", min_value=1, max_value=360, value=12, step=1)
 
-    rows = _rates(loan_type)
+    # KAMPANYA ORANLARI VARSAYILAN OLARAK KAPALI. Bunlar gerçek oranlar ama
+    # herkesin alabildiği oranlar değil (yalnızca yeni müşteriye, ön
+    # onaylıya, belirli bir meslek grubuna). Tabloya karışırlarsa "en ucuz
+    # banka" sıralaması, kullanıcının başvurup ALAMAYACAĞI bir oranla
+    # belirlenir — düzeltilen hatanın ta kendisi (ING %0,99, 2026-08-30).
+    # Görmek isteyen açıyor; açtığında satırlar 🏷️ ile işaretli.
+    kampanyali_sayisi = _campaign_count(loan_type)
+    include_campaign = False
+    if kampanyali_sayisi:
+        include_campaign = st.checkbox(
+            f"Kampanyalı / yeni müşteri oranlarını da göster ({kampanyali_sayisi})",
+            key=f"kampanya_{loan_type}",
+            help=(
+                "Bu oranlar yalnızca belirli müşterilere açık. Koşulu, satırın "
+                "**Kime açık** sütununda yazıyor."
+            ),
+        )
+
+    rows = _rates(loan_type, include_campaign)
     kkdf, bsmv = resolve_loan_taxes(loan_type)
 
-    _render_coverage(loan_type, [r["institution"] for r in rows])
+    _render_coverage(
+        loan_type, [r["institution"] for r in rows if not r.get("is_campaign")]
+    )
 
     if not rows:
         st.info(
@@ -132,10 +152,19 @@ def render() -> None:
     results_by_institution: dict[str, object] = {}
     notes_by_institution: dict[str, str | None] = {}
     code_by_label: dict[str, str] = {}
+    campaign_labels: set[str] = set()
 
     for row in rows:
-        name = institution_label(row["institution"])
+        # ETİKET KAMPANYA ROZETİNİ İÇERİYOR, sadece süs olsun diye değil:
+        # aynı banka hem genel hem kampanyalı oranla listelenebiliyor ve
+        # aşağıdaki üç sözlük ile "Ödeme planını göster" seçicisi bu
+        # etiketle anahtarlanıyor. Rozet olmasaydı ikinci satır birinciyi
+        # sessizce ezer, kullanıcı kampanya oranını seçtiğini sanıp genel
+        # oranın planını görürdü.
+        name = _row_label(row)
         code_by_label[name] = row["institution"]
+        if row.get("is_campaign"):
+            campaign_labels.add(name)
         # Katılım bankasında bu bir faiz oranı değil, kâr oranıdır (§07).
         is_profit_share = kinds.get(row["institution"]) == "participation"
         result = amortize(
@@ -153,6 +182,7 @@ def render() -> None:
             {
                 "Banka": name,
                 "Oran türü": "Kâr oranı" if is_profit_share else "Faiz",
+                "Kime açık": _audience_text(row),
                 "Aylık oran": row["monthly_rate"] * 100,
                 "Yıllık maliyet": annual_cost_rate(result.effective_monthly_rate) * 100,
                 "Taksit": result.installment,
@@ -195,7 +225,16 @@ def render() -> None:
     _render_sources(rows)
 
     chosen = st.selectbox("Ödeme planını göster", df["Banka"].tolist())
-    reference = _find_reference(loan_type, code_by_label.get(chosen))
+    # KAMPANYALI SATIRA REFERANS TAKSİT BAĞLANMAZ. Referans, bankanın KENDİ
+    # ilan ettiği taksit tutarı ve o tutar bankanın GENEL oranına ait
+    # (bkz. collectors/loan_rates.py::LoanReferenceQuoteRecord). Kampanya
+    # satırının taksitini o rakamla karşılaştırmak, hesabımız doğruyken
+    # bile "bizim taksitimiz bankanınkini tutmuyor" diye sahte bir sapma
+    # gösterirdi — oysa karşılaştırılan şey iki FARKLI orandır.
+    reference = (
+        None if chosen in campaign_labels
+        else _find_reference(loan_type, code_by_label.get(chosen))
+    )
     _render_schedule(
         results_by_institution[chosen],
         institution=chosen,

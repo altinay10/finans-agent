@@ -190,6 +190,93 @@ def test_persist_keeps_the_lowest_rate_when_a_page_lists_several(db):
     assert float(rows[0].monthly_rate) == pytest.approx(0.0169)
 
 
+def test_campaign_rate_does_not_replace_the_general_rate(db):
+    """KAMPANYA ORANI GENEL ORANIN YERİNE GEÇEMEZ — bu düzeltmenin özü.
+
+    Canlı hata (2026-08-30): panel ING'yi aylık %0,99 gösteriyordu,
+    DenizBank'ın %2,99'unun üçte biri. Sayı sayfada gerçekten yazıyordu;
+    %0,99 "Turuncu Ekstra Avantajlı Kredi"nin oranıydı ve yalnızca
+    kampanyanın ilk kullanımında geçerliydi. `persist` en düşüğü sakladığı
+    için "en iyi oran" sistematik olarak "en koşullu oran" oluyordu.
+
+    Çözüm kampanyalı satırı ATMAK değil, seçimi İKİYE AYIRMAK: anahtarda
+    `is_campaign` var, yani her grubun kendi en düşüğü saklanıyor.
+    """
+    with SessionLocal() as s:
+        s.add(Institution(code="ING", name="ING", kind="bank"))
+        s.commit()
+
+    LlmLoanRateCollector(banks={}).persist(
+        [
+            LoanRateRecord(institution="ING", loan_type="personal", monthly_rate=0.0099,
+                           is_campaign=True, campaign_note="kampanyanın ilk kullanımında"),
+            LoanRateRecord(institution="ING", loan_type="personal", monthly_rate=0.0169,
+                           is_campaign=True, campaign_note="ilk kez ING'li olanlara"),
+            LoanRateRecord(institution="ING", loan_type="personal", monthly_rate=0.0348),
+        ],
+        run_id=None,
+    )
+    with SessionLocal() as s:
+        rows = s.execute(select(LoanRate)).scalars().all()
+
+    genel = [r for r in rows if not r.is_campaign]
+    kampanya = [r for r in rows if r.is_campaign]
+
+    # İki AYRI satır: gruplar birbirini ezmiyor.
+    assert len(genel) == 1 and len(kampanya) == 1
+    # Genel oran kampanyadan ETKİLENMEDİ — asıl hata buydu.
+    assert float(genel[0].monthly_rate) == pytest.approx(0.0348)
+    # Kampanya grubunun kendi en düşüğü saklandı.
+    assert float(kampanya[0].monthly_rate) == pytest.approx(0.0099)
+    assert kampanya[0].campaign_note == "kampanyanın ilk kullanımında"
+
+
+def test_campaign_rates_are_hidden_from_the_default_loan_table(db):
+    """Panel varsayılan olarak kampanyalı satırı GÖSTERMEZ, ama sayar.
+
+    Kıyas tablosu "ben bu krediyi alsam ne öderim" sorusunu yanıtlıyor;
+    kullanıcının alamayacağı bir oranı varsayılan sıralamaya sokmak o
+    cevabı yanlışlar. Veri duruyor, görünürlüğü kullanıcının seçimi.
+    """
+    from store.queries import latest_loan_rates, loan_campaign_count, loan_type_counts
+
+    with SessionLocal() as s:
+        s.add_all([
+            Institution(code="ING", name="ING", kind="bank"),
+            Institution(code="QNB", name="QNB", kind="bank"),
+        ])
+        s.commit()
+
+    LlmLoanRateCollector(banks={}).persist(
+        [
+            LoanRateRecord(institution="ING", loan_type="personal", monthly_rate=0.0348),
+            LoanRateRecord(institution="ING", loan_type="personal", monthly_rate=0.0099,
+                           is_campaign=True, campaign_note="ilk kullanımda"),
+            # QNB'nin YALNIZCA kampanyalı oranı var — eski davranışta bu
+            # banka panelden tümden kayboluyordu.
+            LoanRateRecord(institution="QNB", loan_type="personal", monthly_rate=0.0289,
+                           is_campaign=True, campaign_note="yeni müşterilere"),
+        ],
+        run_id=None,
+    )
+
+    varsayilan = latest_loan_rates("personal")
+    assert [r["institution"] for r in varsayilan] == ["ING"]
+    assert varsayilan[0]["monthly_rate"] == pytest.approx(0.0348)
+
+    hepsi = latest_loan_rates("personal", include_campaign=True)
+    assert sorted(r["institution"] for r in hepsi) == ["ING", "ING", "QNB"]
+    # QNB artık ERİŞİLEBİLİR — kaybolmuyor, sadece varsayılanda gizli.
+    qnb = next(r for r in hepsi if r["institution"] == "QNB")
+    assert qnb["is_campaign"] is True
+    assert qnb["campaign_note"] == "yeni müşterilere"
+
+    # Kurum sayısı tabloyla tutarlı: kampanyalılar sayılmıyor.
+    assert loan_type_counts().get("personal") == 1
+    # Ama onay kutusunun etiketi için ayrıca sayılıyorlar.
+    assert loan_campaign_count("personal") == 2
+
+
 # ------------------------------------------------------- yapılandırma ----
 
 def test_only_active_banks_are_collected():
@@ -264,9 +351,15 @@ def _satir(oran, herkese, why=""):
                       available_to_all=herkese, why=why)
 
 
-def test_a_rate_that_is_not_open_to_everyone_is_dropped():
-    """`persist` en düşüğü saklıyor; eleme olmadan panel en yanıltıcı sayıyı
-    gösteriyordu. Kullanıcı ING'yi DenizBank'tan üç kat ucuz sanırdı."""
+def test_a_rate_that_is_not_open_to_everyone_is_kept_but_flagged():
+    """Koşullu oran ATILMIYOR, kampanya diye İŞARETLENİYOR.
+
+    Eskiden eleniyordu ve bunun bedeli ağırdı: Odeabank'ın sekiz, QNB'nin
+    altı oranının hepsi kampanyalı olduğu için o iki banka panelde hiç
+    görünmedi (inceleme, 2026-09-08). Asıl sorun elemede değil `persist`'in
+    "en düşüğü sakla" seçimindeydi; düzeltme oraya taşındı (bkz.
+    test_campaign_rate_does_not_replace_the_general_rate).
+    """
     from collectors.loan_rates_llm import _ground
 
     rows = [
@@ -277,10 +370,12 @@ def test_a_rate_that_is_not_open_to_everyone_is_dropped():
     ]
     kept, dropped = _ground(rows, ING_SAYFA, "ING")
 
-    assert [r.monthly_rate_percent for r in kept] == [3.48]
-    assert dropped == 3
-    # persist en düşüğü alıyor: eleme sonrası doğru cevap %3,48.
-    assert min(r.monthly_rate_percent for r in kept) == 3.48
+    # Dördü de duruyor — hiçbiri kaybolmadı.
+    assert [r.monthly_rate_percent for r in kept] == [0.99, 1.69, 2.99, 3.48]
+    # ...ama hiçbiri ELENMEDİ de: eleme sayacı yalnızca zeminlemeyi sayar.
+    assert dropped == 0
+    assert dropped.kosullu == 3
+    assert "3 kayıt kampanyalı" in dropped.aciklama()
 
 
 def test_grounding_still_runs_before_the_availability_check():
@@ -357,12 +452,15 @@ def test_window_starts_at_the_rates_own_section():
 
 
 def test_drop_reasons_are_reported_separately():
-    """"Sayfada yok" ile "herkese açık değil" AYNI ŞEY DEĞİL.
+    """"Sayfada yok" ile "kampanyalı" AYNI ŞEY DEĞİL.
 
     İkisi tek sayıya indirilip "sayfada bulunamadı" diye raporlanıyordu.
     Odeabank'ta yedi oranın yedisi de sayfada gerçekten yazıyordu; hepsi
-    "ön onaylı müşterilere" özel olduğu için elenmişti. Yanlış etiket,
-    olmayan bir uydurma hatasının peşine düşürdü.
+    "ön onaylı müşterilere" özeldi. Yanlış etiket, olmayan bir uydurma
+    hatasının peşine düşürdü.
+
+    Ayrım artık yalnızca raporlama değil DAVRANIŞ farkı: sayfada olmayan
+    oran ATILIYOR, kampanyalı oran SAKLANIP işaretleniyor.
     """
     from collectors.loan_rates_llm import _ground
 
@@ -370,11 +468,37 @@ def test_drop_reasons_are_reported_separately():
         _satir(9.99, True, "sayfada olmayan oran"),
         _satir(3.29, False, "yalnızca ön onaylı müşterilere"),
     ]
-    _kept, elenen = _ground(rows, "kredi %3,29 ile", "ODEABANK")
-    assert elenen == 2
+    kept, elenen = _ground(rows, "kredi %3,29 ile", "ODEABANK")
+
+    # Uydurma gitti, kampanyalı kaldı.
+    assert [r.monthly_rate_percent for r in kept] == [3.29]
+    assert elenen == 1, "eleme sayacı yalnızca zeminlemeyi saymalı"
     assert elenen.yok_sayfada == 1 and elenen.kosullu == 1
     assert "sayfada bulunamadı" in elenen.aciklama()
-    assert "herkese açık değil" in elenen.aciklama()
+    assert "kampanyalı" in elenen.aciklama()
+
+
+def test_a_page_with_only_campaign_rates_is_not_reported_as_broken():
+    """Hepsi kampanyalıysa koşu 'ok' olmalı, kaynak 'bozuk' değil.
+
+    Canlı sonuç (inceleme, 2026-09-08): odeabank_ihtiyac ve qnb
+    "agent 8 kayıt döndürdü — 8 kayıt herkese açık değil" diye `empty`
+    yazıyor, Kayıtlar sekmesi de onları "1105 dakikadır bozuk" gösteriyordu.
+    Oysa sayfa çalışıyor, model doğru davranıyordu; arıza diye raporlanan
+    şey sistemin kendi eleme kararıydı.
+    """
+    from collectors.loan_rates_llm import _ground
+
+    rows = [
+        _satir(3.29, False, "yalnızca ön onaylı müşterilere"),
+        _satir(3.49, False, "ilk kez müşteri olanlara"),
+    ]
+    kept, elenen = _ground(rows, "oranlar %3,29 ve %3,49", "ODEABANK")
+
+    # `parse` döngüsü `if not kept:` ile 'empty' yazıyor — kept dolu
+    # olduğu sürece o dala hiç girilmiyor.
+    assert len(kept) == 2
+    assert elenen == 0
 
 
 def test_loan_type_hint_is_injected_without_a_format_placeholder():

@@ -239,11 +239,29 @@ def profit_share_ratios(principal: float, currency: str = "TRY") -> list[dict]:
         return sorted(best.values(), key=lambda x: (x["institution"], x["term_days"]))
 
 
-def latest_loan_rates(loan_type: str) -> list[dict]:
+def latest_loan_rates(loan_type: str, *, include_campaign: bool = False) -> list[dict]:
+    """Her kurumun bu türdeki en güncel oranı.
+
+    VARSAYILAN GENEL ORAN. Kampanyalı satırlar (yalnızca yeni müşteriye,
+    ön onaylıya, belirli bir meslek grubuna verilen oranlar) ancak açıkça
+    istenirse dönüyor. Sebebi şu: bu liste kredi kıyaslama tablosunu ve
+    ödeme planını besliyor, yani kullanıcının "ben bu krediyi alsam ne
+    öderim" sorusunu. Alamayacağı bir oranı varsayılan olarak göstermek o
+    sorunun cevabını yanlışlar — kampanya oranları saklanıyor ama
+    kullanıcı onları görmeyi kendisi seçiyor (bkz.
+    store/models.py::LoanRate.is_campaign).
+    """
     with SessionLocal() as session:
+        kosullar = [LoanRate.loan_type == loan_type]
+        if not include_campaign:
+            kosullar.append(LoanRate.is_campaign.is_(False))
+
+        # En güncel tarih de aynı süzgeçle bulunuyor: yalnızca kampanya
+        # satırı olan bir gün, o bankanın daha eski ama GENEL oranını
+        # görünmez kılmamalı.
         subq = (
             select(LoanRate.institution, func.max(LoanRate.valid_date).label("max_valid_date"))
-            .where(LoanRate.loan_type == loan_type)
+            .where(*kosullar)
             .group_by(LoanRate.institution)
             .subquery()
         )
@@ -251,7 +269,7 @@ def latest_loan_rates(loan_type: str) -> list[dict]:
             subq,
             (LoanRate.institution == subq.c.institution)
             & (LoanRate.valid_date == subq.c.max_valid_date),
-        ).where(LoanRate.loan_type == loan_type)
+        ).where(*kosullar)
         rows = session.execute(stmt).scalars().all()
         return [
             {
@@ -263,9 +281,29 @@ def latest_loan_rates(loan_type: str) -> list[dict]:
                 "amount_max": float(r.amount_max) if r.amount_max is not None else None,
                 "valid_date": r.valid_date,
                 "fetched_at": r.fetched_at,
+                "is_campaign": bool(r.is_campaign),
+                "campaign_note": r.campaign_note,
             }
             for r in rows
         ]
+
+
+def loan_campaign_count(loan_type: str) -> int:
+    """Bu türde kampanyalı orana sahip KURUM sayısı.
+
+    Panel bu sayıyı onay kutusunun etiketinde gösteriyor: "Kampanyalı /
+    yeni müşteri oranlarını da göster (2)". Sayı sıfırsa kutu hiç
+    çizilmiyor — gösterecek bir şey yokken filtre sunmak, kullanıcıya
+    olmayan bir veri varmış hissi verirdi.
+    """
+    with SessionLocal() as session:
+        subq = (
+            select(LoanRate.institution, func.max(LoanRate.valid_date).label("max_valid_date"))
+            .where(LoanRate.loan_type == loan_type, LoanRate.is_campaign.is_(True))
+            .group_by(LoanRate.institution)
+            .subquery()
+        )
+        return int(session.execute(select(func.count()).select_from(subq)).scalar() or 0)
 
 
 def loan_type_counts() -> dict[str, int]:
@@ -274,6 +312,11 @@ def loan_type_counts() -> dict[str, int]:
     Panelde "Konut: 3 banka · İhtiyaç: 5 · Taşıt: 1" satırını basar.
     Kullanıcının "ödeme planında neden sadece 3 banka var" sorusu tam olarak
     buydu: veri eksik değil, o türü yayınlayan banka sayısı üç.
+
+    KAMPANYALI SATIRLAR SAYILMIYOR: bu sayı tablodaki satır sayısını
+    açıklamak için var ve tablo varsayılan olarak genel oranları gösteriyor
+    (bkz. `latest_loan_rates`). Kampanyalıları katmak, sayıyla tablonun
+    birbirini tutmamasına yol açardı.
     """
     with SessionLocal() as session:
         subq = (
@@ -282,6 +325,7 @@ def loan_type_counts() -> dict[str, int]:
                 LoanRate.institution,
                 func.max(LoanRate.valid_date).label("max_valid_date"),
             )
+            .where(LoanRate.is_campaign.is_(False))
             .group_by(LoanRate.loan_type, LoanRate.institution)
             .subquery()
         )
