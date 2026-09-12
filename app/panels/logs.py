@@ -217,7 +217,7 @@ def _render_health(window: int) -> None:
         )
     st.dataframe(
         pd.DataFrame(rows).style.format({"Başarı oranı": "%{:,.0f}"}),
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
     )
     st.caption(
         "`validate` aşaması: bizim taksit hesabımızın bankanın kendi tutarıyla "
@@ -257,7 +257,7 @@ def _render_http(days: int) -> None:
                     for e in endpoints
                 ]
             ),
-            use_container_width=True, hide_index=True, height=300,
+            width="stretch", hide_index=True, height=300,
         )
 
     only_failures = st.checkbox("Yalnızca başarısız istekler", value=False)
@@ -285,7 +285,7 @@ def _render_http(days: int) -> None:
                 for r in requests
             ]
         ),
-        use_container_width=True, hide_index=True, height=340,
+        width="stretch", hide_index=True, height=340,
     )
     st.caption(
         "**HTTP = 'yanıt yok'** satırlarında istek hiç tamamlanmadı (zaman aşımı "
@@ -349,7 +349,7 @@ def _render_recovery(days: int) -> None:
     if not rows:
         st.success("Bu aralıkta hiçbir kaynak hata almamış.")
         return
-    st.dataframe(_recovery_frame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(_recovery_frame(rows), width="stretch", hide_index=True)
     st.caption(
         "🟢 **düzeldi**: son hatadan SONRA başarılı bir koşu var — geçici bir "
         "arızaydı. 🔴 **hâlâ bozuk**: son hatadan sonra hiç başarı gelmedi, "
@@ -395,7 +395,7 @@ def _render_rate_changes() -> None:
                     for s in stale
                 ]
             ),
-            use_container_width=True, hide_index=True, height=260,
+            width="stretch", hide_index=True, height=260,
         )
     else:
         st.success(f"{stale_days} günden uzun süredir donmuş bir seri yok.")
@@ -422,7 +422,7 @@ def _render_rate_changes() -> None:
                 for c in changes
             ]
         ),
-        use_container_width=True, hide_index=True, height=340,
+        width="stretch", hide_index=True, height=340,
     )
 
 
@@ -479,7 +479,7 @@ def _render_llm() -> None:
                 for c in calls
             ]
         ),
-        use_container_width=True, hide_index=True, height=320,
+        width="stretch", hide_index=True, height=320,
     )
     st.caption(
         "**⚪ kapalı** ve **🟠 bütçe doldu** satırlarında çağrı hiç yapılmadı, "
@@ -508,7 +508,7 @@ def _render_runs(days: int) -> None:
                     for t in triggers
                 ]
             ),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
         if not any(t["trigger"] == "catchup" for t in triggers):
             st.caption(
@@ -535,7 +535,7 @@ def _render_runs(days: int) -> None:
                 for f in failures
             ]
         ),
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
     )
     st.caption(
         "**Bant dışı veri — yazılmadı**: bu bir arıza değil, korumanın "
@@ -568,7 +568,7 @@ def _render_events() -> None:
                 for e in events
             ]
         ),
-        use_container_width=True, hide_index=True, height=420,
+        width="stretch", hide_index=True, height=420,
     )
 
 

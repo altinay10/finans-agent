@@ -884,3 +884,27 @@ def test_tcmb_threshold_covers_a_full_publication_cycle():
     assert stale_hours("TCMB") >= 24
 
 
+# ------------------------------------- streamlit: kaldırılan parametreler ----
+
+def test_no_panel_still_uses_the_removed_container_width_parameter():
+    """`use_container_width` kaldırılma yolunda; panellerde kalmamalı.
+
+    Streamlit her koşuda konteyner loglarını bu uyarıyla dolduruyordu
+    (`docker logs finans-panel`, 2026-09-08): "Please replace
+    use_container_width with width... will be removed after 2025-12-31."
+    Sürekli akan bir uyarı, log'da gerçek hatayı görünmez kılıyor.
+
+    Bu bir stil kuralı değil ÇALIŞABİLİRLİK kuralı: parametre tamamen
+    kaldırıldığında geri sızan tek bir çağrı paneli TypeError ile düşürür
+    ve bunu ancak kullanıcı o sekmeyi açtığında öğreniriz.
+    """
+    from pathlib import Path
+
+    kok = Path(__file__).resolve().parent.parent
+    kalanlar = [
+        f"{yol.relative_to(kok)}:{no}"
+        for yol in sorted((kok / "app").rglob("*.py"))
+        for no, satir in enumerate(yol.read_text(encoding="utf-8").splitlines(), 1)
+        if "use_container_width" in satir
+    ]
+    assert kalanlar == [], f"width='stretch' olmalı: {kalanlar}"

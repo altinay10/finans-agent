@@ -367,7 +367,7 @@ def _render_detail(rows: list[dict], now: datetime) -> None:
         # "ayrıntı" olmaktan çıkıp ikinci bir bulmacaya dönüşüyordu.
         st.dataframe(
             pd.DataFrame([_detail_row(r) for r in rows]),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=(len(rows) + 1) * 35 + 3,
         )

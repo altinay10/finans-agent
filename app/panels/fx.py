@@ -181,7 +181,7 @@ def render() -> None:
         styled = display.style.apply(_gray_stale, axis=1).format(
             {"Alış": "{:,.4f}", "Satış": "{:,.4f}", "Makas": "{:,.4f}", "Yaş (saat)": "{:,.1f}"}
         )
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(styled, width="stretch", hide_index=True)
 
         notes = [fetched_caption(sub["fetched_at"].tolist())]
         # Sayının kaynağı sayının YANINDA dursun; README sunucuda görünmüyor.

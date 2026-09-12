@@ -100,7 +100,7 @@ def _render_profit_shares(principal: float, currency: str) -> None:
         styled = df.style.format(
             {"Kâr paylaşım oranı": "%{:,.0f}", "Stopaj": "%{:,.2f}"}, na_rep="—"
         )
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(styled, width="stretch", hide_index=True)
         share_notes = [fetched_caption([r.get("fetched_at") for r in inst_rows])]
         summary = source_summary("profit_share_endpoints", institution)
         if summary:
@@ -225,7 +225,7 @@ def render() -> None:
                 axis=1,
             )
         )
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(styled, width="stretch", hide_index=True)
 
         notes = [fetched_caption([r.get("fetched_at") for r in institution_rows])]
         summary = source_summary("deposit_endpoints", institution)

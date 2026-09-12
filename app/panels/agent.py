@@ -307,10 +307,10 @@ def _render_key_form(kaynak: str) -> None:
         )
         b1, b2 = st.columns(2)
         oturumluk = b1.form_submit_button(
-            "Yalnızca bu oturumda kullan", use_container_width=True
+            "Yalnızca bu oturumda kullan", width="stretch"
         )
         kalici = b2.form_submit_button(
-            "Sürekli kullanmak için kaydet", type="primary", use_container_width=True
+            "Sürekli kullanmak için kaydet", type="primary", width="stretch"
         )
 
     if not (oturumluk or kalici):
@@ -538,8 +538,8 @@ def _render_pricing() -> None:
                 value=float(cikti_fiyat) if cikti_fiyat is not None else 0.0,
             )
             k1, k2 = st.columns(2)
-            kaydet = k1.form_submit_button("Fiyatı kaydet", use_container_width=True)
-            temizle = k2.form_submit_button("Fiyatı temizle", use_container_width=True)
+            kaydet = k1.form_submit_button("Fiyatı kaydet", width="stretch")
+            temizle = k2.form_submit_button("Fiyatı temizle", width="stretch")
         if kaydet:
             app_settings.set_price_rates(girdi, cikti)
             st.success(
@@ -700,7 +700,7 @@ def _render_usage() -> None:
 
     st.dataframe(
         pd.DataFrame([_call_row(r) for r in rows]),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=420,
     )

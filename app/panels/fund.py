@@ -254,7 +254,7 @@ def render() -> None:
         price_df, x="Tarih", y=value_label,
         title=f"{fund['code']} — {'fiyat serisi' if unit_value else 'endeks serisi'}",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     _render_add_fund()
 

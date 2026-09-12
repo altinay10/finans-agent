@@ -203,7 +203,7 @@ def render() -> None:
             "Toplam vergi (KKDF+BSMV)": "{:,.2f}",
         }
     )
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.dataframe(styled, width="stretch", hide_index=True)
 
     caption_lines = [
         fetched_caption([r.get("fetched_at") for r in rows]),
@@ -399,7 +399,7 @@ def _render_schedule(
             for r in result.schedule
         ]
     )
-    st.dataframe(schedule_df, use_container_width=True, hide_index=True, height=320)
+    st.dataframe(schedule_df, width="stretch", hide_index=True, height=320)
 
 
 def _render_validation(reference: dict | None, loan_type: str) -> None:
