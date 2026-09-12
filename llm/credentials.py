@@ -19,8 +19,10 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -46,6 +48,27 @@ KIMLIK_HATA_KODLARI = frozenset({401, 403, 429})
 ENV_CREDENTIAL_ID = 0
 
 
+def hash_code(code: str) -> str:
+    """Silme kodunun sunucuda saklanan biçimi.
+
+    KOD DEĞİL ÖZET saklanıyor: veritabanını okuyabilen biri (ya da bir
+    yedek dosyası) kodların kendisini ele geçirmesin. Tuz yok ve gerekli
+    değil — kod zaten sunucunun ürettiği, tahmin edilemez bir rastgele
+    dizge; sözlük saldırısına açık bir kullanıcı parolası değil.
+    """
+    return hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
+
+
+def new_code() -> str:
+    """Yeni silme kodu — okunabilir ama tahmin edilemez.
+
+    `token_urlsafe(9)` 12 karakterlik, ~72 bitlik bir dizge veriyor.
+    Kullanıcı bunu bir yere not edecek, o yüzden kısa; ama kaba kuvvetle
+    denenemeyecek kadar da geniş.
+    """
+    return secrets.token_urlsafe(9)
+
+
 @dataclass(frozen=True)
 class Credential:
     id: int | None
@@ -56,6 +79,13 @@ class Credential:
     status: str = "ok"
     last_error: str | None = None
     created_at: datetime | None = None
+    #: Sahibi belli mi? Kodun kendisi ASLA buraya konmuyor.
+    owner_hash: str | None = None
+
+    @property
+    def korumali(self) -> bool:
+        """Silmek için kod gerekiyor mu? (Eski satırlarda gerekmiyor.)"""
+        return bool(self.owner_hash)
 
     @property
     def masked(self) -> str:
@@ -81,6 +111,7 @@ def _to_credential(row: LlmCredential) -> Credential:
         status=row.status,
         last_error=row.last_error,
         created_at=row.created_at,
+        owner_hash=row.owner_hash,
     )
 
 
@@ -232,11 +263,19 @@ def save(
     base_url: str,
     model: str,
     extra_body: dict | None = None,
-) -> Credential:
-    """Anahtarı kaydeder. ÇAĞIRAN ÖNCE TEST ETMİŞ OLMALI (bkz. test_credential)."""
+) -> tuple[Credential, str]:
+    """Anahtarı kaydeder. ÇAĞIRAN ÖNCE TEST ETMİŞ OLMALI (bkz. test_credential).
+
+    Dönen: (kayıt, SİLME KODU). Kod ÇAĞRIYA BİR KEZ dönüyor ve bir daha
+    hiçbir yerden okunamıyor — veritabanında yalnızca özeti var. Paneli
+    açabilen herkesin her anahtarı silebilmesi, kötü niyetli birinin
+    agent'ı tamamen durdurmasına yetiyordu (kullanıcı bildirimi,
+    2026-09-12); kodu yalnızca kaydeden kişi görüyor.
+    """
     if not api_key or not api_key.strip():
         raise ValueError("boş anahtar kaydedilemez")
     govde = json.dumps(extra_body) if extra_body else None
+    kod = new_code()
     with SessionLocal() as session:
         row = LlmCredential(
             api_key=api_key.strip(),
@@ -246,19 +285,57 @@ def save(
             status="ok",
             last_ok_at=utc_now(),
             created_at=utc_now(),
+            owner_hash=hash_code(kod),
         )
         session.add(row)
         session.commit()
         session.refresh(row)
-        return _to_credential(row)
+        cred = _to_credential(row)
+    _aynayi_tazele({cred.id: kod})
+    return cred, kod
 
 
-def delete(credential_id: int) -> None:
+class NotAuthorized(Exception):
+    """Silme kodu yanlış ya da eksik."""
+
+
+def delete(credential_id: int, code: str | None = None) -> None:
+    """Anahtarı siler. Sahibi belliyse DOĞRU KOD şart.
+
+    `owner_hash` boş olan satırlar (bu koruma eklenmeden önce kaydedilmiş
+    olanlar) kodsuz silinebiliyor — aksi halde onları kimse silemezdi ve
+    panelde kalıcı olarak takılı kalırlardı.
+
+    KODU KAYBEDENİN ÇIKIŞ YOLU: kod `data/llm_credentials.json` aynasında
+    düz metin duruyor; sunucuya erişebilen kişi oradan okuyabilir
+    (bkz. llm/credentials_file.py).
+    """
     with SessionLocal() as session:
         row = session.get(LlmCredential, credential_id)
-        if row is not None:
-            session.delete(row)
-            session.commit()
+        if row is None:
+            return
+        if row.owner_hash:
+            if not code or not secrets.compare_digest(hash_code(code), row.owner_hash):
+                raise NotAuthorized(
+                    "Bu anahtarı yalnızca ekleyen kişi silebilir; silme kodu gerekiyor."
+                )
+        session.delete(row)
+        session.commit()
+    _aynayi_tazele()
+
+
+def _aynayi_tazele(yeni_kodlar: dict[int, str] | None = None) -> None:
+    """JSON aynasını veritabanının güncel hâline göre yeniden yazar.
+
+    Hata yutuluyor: ayna yazılamadı diye kaydetme/silme işlemi düşmemeli,
+    kaynak doğru veritabanı (bkz. llm/credentials_file.py).
+    """
+    from llm import credentials_file
+
+    try:
+        credentials_file.write(chain(), yeni_kodlar)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("anahtar aynası tazelenemedi: %s", exc)
 
 
 def listele() -> list[Credential]:
