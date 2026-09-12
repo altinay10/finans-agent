@@ -77,10 +77,65 @@ def _run_all() -> int:
     return 0
 
 
+def _keys(argv: list[str]) -> int:
+    """`keys` komutu — kayıtlı LLM anahtarlarını listeler ve siler.
+
+    NEDEN PANELDE DEĞİL BURADA: panelde kimlik doğrulama yok. Bir dönem
+    "yalnızca ekleyen silebilir" kuralı denendi ve yetmedi — kural
+    eklenmeden önce kaydedilmiş satırlara muafiyet tanıyordu ve canlıdaki
+    tek anahtar tam olarak öyle bir satırdı, kodsuz silindi (2026-09-13).
+    İstemciye bakan her silme yolu, panel açıkken benzer bir delik taşıyor.
+    Silmeyi sunucuya almak bu sınıfı tamamen kapatıyor: silebilmek için
+    makineye erişmek gerekiyor.
+
+    ANAHTAR TAM OLARAK YAZDIRILMAZ, yalnızca son dört hane. Komutun çıktısı
+    log'a ya da bir terminal kaydına düşebilir.
+    """
+    from llm import credentials
+
+    kayitlar = credentials.chain()
+
+    if len(argv) == 1:                      # sadece "keys" -> listele
+        if not kayitlar:
+            print("Kayıtlı anahtar yok. (`.env`'deki anahtar burada görünmez.)")
+            return 0
+        print(f"{len(kayitlar)} kayıtlı anahtar:")
+        for c in kayitlar:
+            print(f"  #{c.id}  {c.masked}  {c.model}  {c.base_url}  [{c.status}]")
+        print("\nSilmek için: python worker.py keys rm <id>")
+        return 0
+
+    if len(argv) == 3 and argv[1] == "rm":
+        try:
+            kimlik = int(argv[2])
+        except ValueError:
+            print(f"Geçersiz id: {argv[2]}", file=sys.stderr)
+            return 2
+        hedef = next((c for c in kayitlar if c.id == kimlik), None)
+        if hedef is None:
+            print(f"#{kimlik} bulunamadı.", file=sys.stderr)
+            return 1
+        # NE SİLİNDİĞİ YAZDIRILIYOR: yanlış id ile silen kişi bunu ANINDA
+        # görsün. Sessiz bir "tamam" çıktısı, yanlış anahtarı sildiğini
+        # ancak agent bir sonraki koşuda düştüğünde fark ettirirdi.
+        print(f"Siliniyor: #{hedef.id} {hedef.masked} {hedef.model}")
+        credentials.delete(kimlik)
+        print("Silindi.")
+        return 0
+
+    print("Kullanım: python worker.py keys [rm <id>]", file=sys.stderr)
+    return 2
+
+
 def main() -> int:
+    # `keys` bir toplayıcı DEĞİL; toplayıcı çözümünden önce ele alınıyor.
+    if len(sys.argv) >= 2 and sys.argv[1] == "keys":
+        init_db()
+        return _keys(sys.argv[1:])
+
     if len(sys.argv) != 2 or (sys.argv[1] != "all" and sys.argv[1] not in COLLECTORS):
         names = ", ".join(sorted(COLLECTORS))
-        print(f"Kullanım: python worker.py <all|{names}>", file=sys.stderr)
+        print(f"Kullanım: python worker.py <all|keys|{names}>", file=sys.stderr)
         return 2
 
     init_db()

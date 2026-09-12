@@ -480,15 +480,25 @@ def test_custom_provider_keeps_what_the_user_typed(form_durumu):
     assert form_durumu[agent.FORM_EXTRA] == '{"x": 1}'
 
 
-def test_price_boxes_start_at_one_and_five(form_durumu):
-    """Fiyat kutuları boş değil, makul bir varsayılanla açılmalı.
+def test_price_boxes_follow_the_selected_provider(form_durumu):
+    """Fiyat SAĞLAYICIYA ait; sağlayıcı değişince fiyat da değişmeli.
 
-    Ayrı bir "Birim fiyat" bölümü vardı, kullanıcı onu açmayınca maliyet
-    "bilinmiyor" kalıyordu (kullanıcı isteği, 2026-09-12).
+    Eski fiyatı bırakmak maliyet sütununu sessizce yanlışlardı: Gemini'nin
+    fiyatıyla hesaplanmış bir DeepSeek koşusu "doğru görünen yanlış"
+    üretir.
     """
     from app.panels import agent
 
-    agent._form_alanlarini_hazirla()
+    form_durumu[agent.PROVIDER_KEY] = "Google Gemini"
+    agent._saglayici_degisti()
+    # gemini-3.5-flash-lite listesi (kullanıcı bildirimi, 2026-09-13).
+    assert form_durumu[agent.FORM_PRICE_IN] == 0.30
+    assert form_durumu[agent.FORM_PRICE_OUT] == 2.50
+
+    # Fiyatı bilinmeyen sağlayıcıda genel varsayılana düşülür; 0 yazmak
+    # "bedava" demek olurdu ve maliyeti sessizce sıfırlardı.
+    form_durumu[agent.PROVIDER_KEY] = "DeepSeek"
+    agent._saglayici_degisti()
     assert form_durumu[agent.FORM_PRICE_IN] == 1.0
     assert form_durumu[agent.FORM_PRICE_OUT] == 5.0
 

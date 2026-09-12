@@ -7,10 +7,7 @@ from store import app_settings
 
 
 def _kaydet(anahtar: str, *, model: str = "test-model", base_url: str = "https://a.example/v1"):
-    # `save` artık (kayıt, SİLME KODU) döndürüyor; buradaki testlerin
-    # çoğunu kod ilgilendirmiyor, sahiplik testleri onu ayrıca alıyor.
-    cred, _kod = credentials.save(anahtar, base_url=base_url, model=model)
-    return cred
+    return credentials.save(anahtar, base_url=base_url, model=model)
 
 
 # ------------------------------------------------------------- zincir ----

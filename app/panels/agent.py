@@ -145,7 +145,6 @@ def render() -> None:
     )
 
     _render_state(kaynak)
-    _render_silme_kodu()
     _render_key_form(kaynak)
     _render_saved_keys()
     st.divider()
@@ -184,11 +183,6 @@ def _render_state(kaynak: str) -> None:
         )
     elif kaynak == ".env":
         yedek_sayisi = len(credentials.chain())
-        yedek_notu = (
-            f" **{yedek_sayisi} kayıtlı yedek anahtar** bekliyor; `.env`'deki "
-            "kimlik hatasıyla düşerse otomatik olarak sıradakine geçilir."
-            if yedek_sayisi else ""
-        )
         gecmis = _son_sonuc(settings.LLM_MODEL)
         # KUTUNUN RENGİ ARTIK KANITA BAĞLI. Eskiden koşulsuz yeşildi ve
         # "kullanılıyor" diyordu; anahtar çalışmasa bile. Canlıda
@@ -213,34 +207,22 @@ def _render_state(kaynak: str) -> None:
                     " Şu an yedek anahtar YOK, yani agent hiç çalışmıyor."
                 )
             )
-        else:
-            durum_notu = ""
-            if gecmis:
-                durum_notu = (
-                    f" Son çağrı **başarılı** ({_ne_zaman(gecmis['created_at'])})."
-                )
-            else:
-                # "Henüz denenmedi" ile "çalışıyor" aynı şey değil; ikisini
-                # aynı cümleyle anlatmak yeni kurulumda yanlış güven verir.
-                durum_notu = (
-                    " Bu modelle henüz gerçek bir çağrı yapılmadı — aşağıdaki "
-                    "**Zinciri sına** ile şimdi doğrulayabilirsin."
-                )
-            st.success(
-                f"**`.env`'deki anahtar** kullanılıyor (model `{settings.LLM_MODEL}`). "
-                "Panelden kaydedilen bir anahtar varsa bile `.env` ÖNCELİKLİDİR — "
-                "sunucu sahibinin doğrudan yapılandırdığı anahtar, panelden hiç "
-                f"dokunulmamıştır.{yedek_notu}{durum_notu}"
+        elif gecmis is None:
+            # "Henüz denenmedi" ile "çalışıyor" aynı şey değil; sessiz
+            # geçmek yeni kurulumda doğrulanmamış bir güven verirdi.
+            st.caption(
+                "Bu modelle henüz gerçek bir çağrı yapılmadı — aşağıdaki "
+                "**Zinciri sına** ile şimdi doğrulayabilirsin."
             )
+        # HER ŞEY YOLUNDAYSA KUTU YOK (kullanıcı kararı, 2026-09-13).
+        # Eskiden yeşil bir kutu ".env önceliklidir, son çağrı başarılı"
+        # diye her açılışta aynı paragrafı tekrarlıyordu. Kalıcı olarak
+        # görünen bir bildirim bilgi taşımıyor, yalnızca yer kaplıyor ve
+        # gerçekten dikkat isteyen kutuların (yukarıdaki kırmızı) etkisini
+        # azaltıyor. Hangi anahtarın takılı olduğu zaten üstteki kartta
+        # yazıyor; kutu ancak bir SORUN varken çiziliyor.
         _render_chain_test()
     elif kaynak == "kayıtlı":
-        aktif = credentials.active()
-        st.success(
-            f"Panelden kaydedilen anahtar kullanılıyor (**{aktif.masked}**, "
-            f"model `{aktif.model}`) — `.env`'de anahtar tanımlı değil. "
-            "Veritabanında tutuluyor, yani **zamanlayıcı da aynı anahtarı "
-            "görüyor** ve konteyner yeniden kurulunca kaybolmuyor."
-        )
         _render_chain_test()
     elif kaynak == "oturum":
         st.info(
@@ -261,10 +243,6 @@ def _render_state(kaynak: str) -> None:
 #: Giriş formunun oturum durumu anahtarları. Kutular `key=` ile
 #: bağlandığı için değerleri burada yaşıyor: form gönderildikten sonra da
 #: yerinde kalmalarının (ve yalnızca BAŞARIDA temizlenmelerinin) yolu bu.
-#: En son üretilen silme kodu — kaydettikten sonraki yeniden
-#: çalıştırmada bir kez gösterilip düşürülüyor.
-SON_SILME_KODU = "agent_son_silme_kodu"
-
 PROVIDER_KEY = "agent_saglayici"
 FORM_KEY = "agent_form_anahtar"
 FORM_BASE_URL = "agent_form_base_url"
@@ -273,35 +251,8 @@ FORM_EXTRA = "agent_form_extra"
 FORM_PRICE_IN = "agent_form_fiyat_girdi"
 FORM_PRICE_OUT = "agent_form_fiyat_cikti"
 
-#: Fiyat kutularının varsayılanı (USD / 1M token). Kullanıcı isteği
-#: (2026-09-12): boş bırakmak yerine makul bir başlangıç göster, böylece
-#: maliyet sütunu "bilinmiyor" olarak kalmasın.
-VARSAYILAN_GIRDI_FIYAT = 1.0
-VARSAYILAN_CIKTI_FIYAT = 5.0
-
-
-def _render_silme_kodu() -> None:
-    """Son kaydedilen anahtarın silme kodunu BİR KEZ gösterir.
-
-    Sunucuda yalnızca kodun özeti duruyor (bkz. llm/credentials.py), yani
-    bu kutu bir daha çizilmezse kod panelden geri okunamaz. Kullanıcı
-    "Gördüm" deyip kapatana kadar ekranda kalıyor — yeniden çalıştırmalar
-    arasında kaybolsaydı, kod da kaybolurdu.
-    """
-    kayit = st.session_state.get(SON_SILME_KODU)
-    if not kayit:
-        return
-    _kimlik, kod = kayit
-    st.warning(
-        f"**Bu anahtarın silme kodu: `{kod}`**\n\n"
-        "Bir yere kaydet. Bu kodu bilen dışında kimse bu anahtarı silemez — "
-        "sunucuda yalnızca kodun özeti tutuluyor, panelden geri okunamaz. "
-        "Kaybedersen sunucudaki `data/llm_credentials.json` dosyasından "
-        "okuyabilirsin."
-    )
-    if st.button("Gördüm, kapat", key="silme_kodu_kapat"):
-        st.session_state.pop(SON_SILME_KODU, None)
-        st.rerun()
+# Fiyat varsayılanları artık SAĞLAYICIYA ait (bkz. llm/providers.prices):
+# Gemini'nin listesi biliniyor, diğerleri genel varsayılana düşüyor.
 
 
 def _varsayilan_saglayici() -> str:
@@ -332,6 +283,12 @@ def _saglayici_degisti() -> None:
     st.session_state[FORM_BASE_URL] = onayar.base_url
     st.session_state[FORM_MODEL] = onayar.model
     st.session_state[FORM_EXTRA] = json.dumps(onayar.extra_body) if onayar.extra_body else ""
+    # FİYAT DA SAĞLAYICIYA AİT. Sağlayıcı değişince eski fiyatı bırakmak,
+    # maliyet sütununu sessizce yanlışlardı: Gemini'nin fiyatıyla
+    # hesaplanmış bir DeepSeek koşusu "doğru görünen yanlış" üretir.
+    st.session_state[FORM_PRICE_IN], st.session_state[FORM_PRICE_OUT] = providers.prices(
+        onayar.label
+    )
 
 
 def _form_alanlarini_hazirla() -> None:
@@ -350,14 +307,15 @@ def _form_alanlarini_hazirla() -> None:
     for ad, deger in varsayilanlar.items():
         st.session_state.setdefault(ad, deger)
 
-    # Fiyat: kayıtlı değer varsa O, yoksa varsayılan. Kayıtlıyı ezmek,
-    # bilinçli girilmiş bir fiyatı sessizce geri alırdı.
+    # Fiyat: kayıtlı değer varsa O, yoksa seçili sağlayıcının fiyatı.
+    # Kayıtlıyı ezmek, bilinçli girilmiş bir fiyatı sessizce geri alırdı.
+    on_girdi, on_cikti = providers.prices(st.session_state[PROVIDER_KEY])
     kayitli_girdi, kayitli_cikti = app_settings.price_rates()
     st.session_state.setdefault(
-        FORM_PRICE_IN, VARSAYILAN_GIRDI_FIYAT if kayitli_girdi is None else kayitli_girdi
+        FORM_PRICE_IN, on_girdi if kayitli_girdi is None else kayitli_girdi
     )
     st.session_state.setdefault(
-        FORM_PRICE_OUT, VARSAYILAN_CIKTI_FIYAT if kayitli_cikti is None else kayitli_cikti
+        FORM_PRICE_OUT, on_cikti if kayitli_cikti is None else kayitli_cikti
     )
 
 
@@ -504,15 +462,11 @@ def _render_key_form(kaynak: str) -> None:
                 "doğru olsa bile yanlış uç noktaya gönderilirse reddedilir."
             )
             return
-        cred, silme_kodu = credentials.save(
+        cred = credentials.save(
             anahtar, base_url=base_url, model=model, extra_body=extra_body
         )
         # Fiyat anahtarla birlikte kaydediliyor (bkz. formdaki not).
         app_settings.set_price_rates(float(girdi_fiyat), float(cikti_fiyat))
-        # SİLME KODU BİR KEZ GÖSTERİLİYOR. Sunucuda yalnızca özeti var,
-        # yani bu kutu kapandıktan sonra kodu hiçbir yerden geri okunamaz
-        # (kurtarma yolu: data/llm_credentials.json).
-        st.session_state[SON_SILME_KODU] = (cred.id, silme_kodu)
         _formu_temizle()
         # Oturumluk anahtar kalıcı olanı gizlerdi: kullanıcı "kaydettim ama
         # eskisi kullanılıyor" durumuna düşerdi.
@@ -663,11 +617,23 @@ def _render_saved_keys() -> None:
                 "sıradakine geçilir. Kotası yenilenirse ilk başarılı koşuda tekrar "
                 "`çalışıyor` olur — bu yüzden düşen anahtar silinmiyor, sona atılıyor."
             )
+        # SİLME PANELDEN KALDIRILDI (kullanıcı kararı, 2026-09-13).
+        #
+        # Önce "yalnızca ekleyen silebilir" kuralı denendi ve YETMEDİ: kural
+        # eklenmeden ÖNCE kaydedilmiş satırlara muafiyet tanınmıştı (aksi
+        # halde onları kimse silemezdi) ve canlıdaki tek anahtar tam olarak
+        # öyle bir satırdı — kodsuz silindi. Muafiyet, korumanın kendisini
+        # anlamsız kılan bir delikti.
+        #
+        # Şimdiki kural daha basit ve deliği yok: PANELDEN HİÇ SİLİNEMEZ.
+        # Silme, sunucuya erişebilen kişinin işi (`python worker.py keys`).
+        # Paneli açan biri artık hiçbir anahtarı kaldıramaz, dolayısıyla
+        # agent'ı durduramaz.
         st.caption(
-            "🔒 **Bir anahtarı yalnızca onu ekleyen kişi silebilir.** Silmek "
-            "için kaydederken gösterilen kod gerekiyor; sunucuda o kodun "
-            "yalnızca özeti duruyor. Kodunu kaybettiysen sunucudaki "
-            "`data/llm_credentials.json` dosyasından okunabilir."
+            "🔒 **Anahtarlar panelden silinemez.** Silme yalnızca sunucuya "
+            "erişen kişinin yapabileceği bir iş: Raspberry Pi'de "
+            "`docker exec finans-scheduler python worker.py keys` ile "
+            "listelenir, `keys rm <id>` ile silinir."
         )
         for index, cred in enumerate(kayitlilar):
             c1, c2, c3 = st.columns([3, 3, 2])
@@ -677,49 +643,11 @@ def _render_saved_keys() -> None:
                 etiket = "🟢 kullanılıyor"
             else:
                 etiket = "⚪ yedek"
-            c1.write(f"{etiket} · **{cred.masked}**" + (" 🔒" if cred.korumali else ""))
+            c1.write(f"{etiket} · **{cred.masked}**")
             c2.write(f"`{cred.model}`")
             c3.caption(cred.base_url.replace("https://", "")[:28])
-            _render_delete(cred)
             if cred.status == "failed" and cred.last_error:
                 st.caption(f"↳ {cred.last_error[:160]}")
-
-
-def _render_delete(cred) -> None:
-    """Tek bir anahtarın silme denetimi.
-
-    KODU BİLEN AYNI OTURUMDA İKİ KEZ YAZMASIN: kaydeden kişinin kodu
-    oturum durumunda duruyor ve kutuya önceden dolduruluyor. Başka bir
-    tarayıcıdan gelen biri boş kutu görür ve kodu bilmiyorsa silemez —
-    korumanın bütün noktası bu.
-    """
-    if not cred.korumali:
-        # Bu koruma eklenmeden ÖNCE kaydedilmiş satır: sahibi bilinmiyor,
-        # kod sorulamaz. Aksi halde kimse silemez ve panelde kalıcı olarak
-        # takılı kalırdı.
-        if st.button("Sil", key=f"sil_{cred.id}"):
-            credentials.delete(cred.id)
-            st.rerun()
-        return
-
-    d1, d2 = st.columns([3, 1])
-    kayitli = st.session_state.get(SON_SILME_KODU)
-    onceden = kayitli[1] if kayitli and kayitli[0] == cred.id else ""
-    kod = d1.text_input(
-        "Silme kodu",
-        value=onceden,
-        key=f"kod_{cred.id}",
-        label_visibility="collapsed",
-        placeholder="silme kodu",
-    )
-    if d2.button("Sil", key=f"sil_{cred.id}"):
-        try:
-            credentials.delete(cred.id, kod)
-        except credentials.NotAuthorized as exc:
-            st.error(f"{exc}")
-            return
-        st.rerun()
-
 
 
 # -------------------------------------------------------- çalıştır ----

@@ -12,10 +12,9 @@ kurgulandı çünkü iki ayrı kaynağın ikisinden de okunması, biri
 güncellenip diğeri kalınca sessiz bir kayma üretirdi — hangi anahtarın
 gerçekten kullanıldığı belirsizleşirdi.
 
-SİLME KODU BURADA DÜZ METİN. Veritabanında yalnızca kodun özeti var, yani
-kodunu kaybeden kullanıcı anahtarını panelden silemez. Kurtarma yolu bu
-dosya: sunucuya erişebilen kişi kodu buradan okur. Dosya zaten API
-anahtarlarının kendisini taşıdığı için bu ek bir sır açığa çıkarmıyor.
+SİLME BU DOSYADAN YAPILMAZ. Dosyayı elle düzenlemek veritabanını
+değiştirmez — ayna yalnızca yazılıyor, hiç okunmuyor. Bir anahtarı
+kaldırmak için sunucuda `python worker.py keys rm <id>` çalıştırılır.
 
 DOSYA İZNİ 0600 ve `data/` altında (yani `.gitignore` kapsamında, imaja da
 girmiyor). Yine de düz metin sır taşıyor: bu dosyayı kopyalayan, bütün
@@ -40,7 +39,7 @@ PATH = Path(
 )
 
 
-def _satir(cred, silme_kodu: str | None) -> dict:
+def _satir(cred) -> dict:
     return {
         "id": cred.id,
         "api_key": cred.api_key,
@@ -49,11 +48,10 @@ def _satir(cred, silme_kodu: str | None) -> dict:
         "extra_body": cred.extra_body,
         "status": cred.status,
         "created_at": cred.created_at.isoformat() if cred.created_at else None,
-        "delete_code": silme_kodu,
     }
 
 
-def write(creds, kodlar: dict[int, str] | None = None) -> Path | None:
+def write(creds) -> Path | None:
     """Aynayı baştan yazar. Dönen: dosya yolu ya da None (yazılamadıysa).
 
     HATA YUTULUR: ayna yazılamadı diye anahtarın KAYDEDİLMESİ düşmemeli —
@@ -64,13 +62,8 @@ def write(creds, kodlar: dict[int, str] | None = None) -> Path | None:
     okumada ayrıştırılamaz ve kurtarma yolu olması gereken dosya
     kullanılamaz hale gelirdi.
 
-    `kodlar`: id -> silme kodu. Yalnızca BU çağrıda üretilen kod elde
-    olduğu için, önceki satırların kodları dosyadan geri okunup korunuyor;
-    aksi halde her yeni kayıt eskilerin kurtarma kodunu silerdi.
     """
-    kodlar = dict(kodlar or {})
-    kodlar = {**_mevcut_kodlar(), **kodlar}
-    govde = [_satir(c, kodlar.get(c.id)) for c in creds]
+    govde = [_satir(c) for c in creds]
     try:
         PATH.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -86,21 +79,6 @@ def write(creds, kodlar: dict[int, str] | None = None) -> Path | None:
         logger.warning("anahtar aynası yazılamadı (%s): %s", PATH, exc)
         return None
     return PATH
-
-
-def _mevcut_kodlar() -> dict[int, str]:
-    """Dosyada duran silme kodları — yeniden yazarken kaybolmasınlar."""
-    try:
-        govde = json.loads(PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(govde, list):
-        return {}
-    return {
-        satir["id"]: satir["delete_code"]
-        for satir in govde
-        if isinstance(satir, dict) and satir.get("id") is not None and satir.get("delete_code")
-    }
 
 
 def read() -> list[dict]:
