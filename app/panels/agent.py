@@ -189,12 +189,50 @@ def _render_state(kaynak: str) -> None:
             "kimlik hatasıyla düşerse otomatik olarak sıradakine geçilir."
             if yedek_sayisi else ""
         )
-        st.success(
-            f"**`.env`'deki anahtar** kullanılıyor (model `{settings.LLM_MODEL}`). "
-            "Panelden kaydedilen bir anahtar varsa bile `.env` ÖNCELİKLİDİR — "
-            "sunucu sahibinin doğrudan yapılandırdığı anahtar, panelden hiç "
-            f"dokunulmamıştır.{yedek_notu}"
-        )
+        gecmis = _son_sonuc(settings.LLM_MODEL)
+        # KUTUNUN RENGİ ARTIK KANITA BAĞLI. Eskiden koşulsuz yeşildi ve
+        # "kullanılıyor" diyordu; anahtar çalışmasa bile. Canlıda
+        # `qwen-flash` her koşuda 403 alırken panel 18 saat boyunca yeşil
+        # kaldı (inceleme, 2026-09-08) — sessiz arızanın görünmemesinin
+        # sebebi tam olarak buydu.
+        if gecmis and gecmis["status"] == "failed":
+            st.error(
+                f"**`.env`'deki anahtar KULLANILAMIYOR.** `{settings.LLM_MODEL}` "
+                f"ile yapılan son çağrı başarısız oldu "
+                f"({_ne_zaman(gecmis['created_at'])}):\n\n"
+                f"> {(gecmis['error'] or 'hata metni kaydedilmemiş')[:300]}\n\n"
+                "Zincir `.env` ile başlıyor, yani her planlı koşu önce bunu "
+                "deneyip hata alıyor. Düzeltmenin iki yolu var: `.env` "
+                "dosyasındaki `LLM_MODEL`/`LLM_API_KEY` değerlerini "
+                "geçerli bir sağlayıcıyla değiştirip konteyneri yeniden "
+                "başlatmak, ya da aşağıdan çalışan bir anahtar kaydetmek."
+                + (
+                    f" Şu an **{yedek_sayisi} yedek anahtar** var; kimlik "
+                    "hatasında (401/403/429) otomatik olarak onlara düşülür."
+                    if yedek_sayisi else
+                    " Şu an yedek anahtar YOK, yani agent hiç çalışmıyor."
+                )
+            )
+        else:
+            durum_notu = ""
+            if gecmis:
+                durum_notu = (
+                    f" Son çağrı **başarılı** ({_ne_zaman(gecmis['created_at'])})."
+                )
+            else:
+                # "Henüz denenmedi" ile "çalışıyor" aynı şey değil; ikisini
+                # aynı cümleyle anlatmak yeni kurulumda yanlış güven verir.
+                durum_notu = (
+                    " Bu modelle henüz gerçek bir çağrı yapılmadı — aşağıdaki "
+                    "**Zinciri sına** ile şimdi doğrulayabilirsin."
+                )
+            st.success(
+                f"**`.env`'deki anahtar** kullanılıyor (model `{settings.LLM_MODEL}`). "
+                "Panelden kaydedilen bir anahtar varsa bile `.env` ÖNCELİKLİDİR — "
+                "sunucu sahibinin doğrudan yapılandırdığı anahtar, panelden hiç "
+                f"dokunulmamıştır.{yedek_notu}{durum_notu}"
+            )
+        _render_chain_test()
     elif kaynak == "kayıtlı":
         aktif = credentials.active()
         st.success(
@@ -203,6 +241,7 @@ def _render_state(kaynak: str) -> None:
             "Veritabanında tutuluyor, yani **zamanlayıcı da aynı anahtarı "
             "görüyor** ve konteyner yeniden kurulunca kaybolmuyor."
         )
+        _render_chain_test()
     elif kaynak == "oturum":
         st.info(
             "Anahtar **yalnızca bu tarayıcı oturumunda** geçerli: diske "
@@ -346,6 +385,92 @@ def _render_key_form(kaynak: str) -> None:
         )
 
     st.rerun()
+
+
+#: Zincir sınamasının sonucu — düğmeye basıldıktan sonraki yeniden
+#: çalıştırmalarda da ekranda kalsın diye oturum durumunda tutuluyor.
+CHAIN_TEST_KEY = "zincir_sinama"
+
+
+@st.cache_data(ttl=60)
+def _son_sonuc(model: str) -> dict | None:
+    return queries.llm_last_outcome(model)
+
+
+def _ne_zaman(ts: datetime | None) -> str:
+    """'3,2 saat önce' — kutu metnine sığacak kadar kısa."""
+    if ts is None:
+        return "zamanı bilinmiyor"
+    fark = (datetime.now(timezone.utc) - as_utc(ts)).total_seconds()
+    if fark < 3600:
+        return f"{fark / 60:.0f} dk önce"
+    if fark < 86400:
+        return f"{fark / 3600:.1f} saat önce"
+    return f"{fark / 86400:.1f} gün önce"
+
+
+def _render_chain_test() -> None:
+    """Zincirdeki HER anahtarı tek tek sınar ve sonucu gösterir.
+
+    NEDEN AÇILIŞTA DEĞİL, DÜĞMEYLE: açılışta koşan bir sınama, paneli her
+    açan ziyaretçi için sağlayıcıya istek atardı — panelin sunucunun
+    anahtarını harcamaması kuralına (bkz. store/llm_backoff.py) arkadan
+    dolaşmak olurdu. Düğme, sınamayı kullanıcının bilinçli kararı yapıyor.
+
+    NEDEN GEREKLİ: `llm_calls` geçmişi yalnızca DAHA ÖNCE denenmiş modeller
+    hakkında konuşabiliyor. Yeni kurulumda, ya da `.env` az önce
+    değiştirildiğinde geçmiş yok ve "çalışıyor mu" sorusunun tek dürüst
+    cevabı canlı bir deneme.
+
+    ZİNCİRİN TAMAMI sınanıyor, yalnızca aktif anahtar değil: asıl soru
+    "anahtarım çalışıyor mu" değil, "`.env` düşerse arkasında çalışan bir
+    şey var mı". Bu, canlıda 18 saat cevapsız kalan soruydu.
+    """
+    with st.expander("Zinciri sına — her anahtara birer küçük istek", expanded=False):
+        st.caption(
+            "Her anahtara `max_tokens=1` ile tek bir *ping* atılır; amaç "
+            "yanıtın içeriği değil, sağlayıcının anahtarı kabul edip "
+            "etmediği. Maliyeti ihmal edilebilir ama **sıfır değildir**, "
+            "bu yüzden kendiliğinden çalışmaz."
+        )
+        if st.button("Zinciri sına", key="zinciri_sina"):
+            zincir = credentials.effective_chain()
+            sonuclar = []
+            for cred in zincir:
+                kaynak_adi = (
+                    "`.env`" if cred.id == credentials.ENV_CREDENTIAL_ID
+                    else f"kayıtlı #{cred.id}"
+                )
+                ok, hata = credentials.test_credential(
+                    cred.api_key,
+                    base_url=cred.base_url,
+                    model=cred.model,
+                    extra_body=cred.extra_body,
+                )
+                sonuclar.append(
+                    {"kaynak": kaynak_adi, "model": cred.model,
+                     "anahtar": cred.masked, "ok": ok, "hata": hata}
+                )
+            st.session_state[CHAIN_TEST_KEY] = sonuclar
+
+        sonuclar = st.session_state.get(CHAIN_TEST_KEY)
+        if not sonuclar:
+            return
+        for s in sonuclar:
+            if s["ok"]:
+                st.success(f"🟢 {s['kaynak']} · `{s['model']}` · {s['anahtar']} — çalışıyor")
+            else:
+                st.error(
+                    f"🔴 {s['kaynak']} · `{s['model']}` · {s['anahtar']}\n\n"
+                    f"> {(s['hata'] or 'hata metni yok')[:300]}"
+                )
+        if not any(s["ok"] for s in sonuclar):
+            st.warning(
+                "**Zincirde çalışan anahtar yok** — agent'a bağlı banka "
+                "sayfaları hiç güncellenmiyor. Panelin geri kalanı (döviz, "
+                "mevduat, fon ve API'si olan bankaların kredi oranları) "
+                "bundan etkilenmez."
+            )
 
 
 def _render_saved_keys() -> None:

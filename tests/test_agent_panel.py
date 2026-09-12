@@ -313,3 +313,77 @@ def test_two_sessions_do_not_share_the_call_budget():
     a.start(); b.start(); a.join(); b.join()
 
     assert gorulen == {"a": 3, "b": 7}
+
+
+# ------------------------------------------- anahtar GERÇEKTEN çalışıyor mu ----
+
+def _llm_call(model, status, error=None, minutes_ago=10):
+    from datetime import datetime, timedelta, timezone
+
+    from store.models import LlmCall
+
+    return LlmCall(
+        model=model, status=status, error=error, collector="loan_rates_llm",
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        - timedelta(minutes=minutes_ago),
+    )
+
+
+def test_a_model_that_keeps_failing_is_visible_as_failing(db):
+    """Agent kartının yeşil kutusu KANITA bakmalı.
+
+    Canlıda `qwen-flash` her koşuda 403 "ModelAccessDenied" alırken panel
+    18 saat boyunca "`.env`'deki anahtar kullanılıyor" diye yeşil kutu
+    gösterdi (inceleme, 2026-09-08). Kutu hiçbir şeyi doğrulamıyordu;
+    sessiz arızanın görünmemesinin sebebi buydu.
+    """
+    from store.db import SessionLocal
+    from store.queries import llm_last_outcome
+
+    with SessionLocal() as s:
+        s.add_all([
+            _llm_call("qwen-flash-2025-07-28", "ok", minutes_ago=5000),
+            _llm_call("qwen-flash-2025-07-28", "failed",
+                      error="Error code: 403 - Access to model denied", minutes_ago=30),
+        ])
+        s.commit()
+
+    sonuc = llm_last_outcome("qwen-flash-2025-07-28")
+    assert sonuc is not None
+    assert sonuc["status"] == "failed"
+    assert "403" in sonuc["error"]
+
+
+def test_configuration_states_do_not_count_as_evidence(db):
+    """'disabled' ve 'budget_exceeded' anahtar hakkında HİÇBİR ŞEY söylemez.
+
+    İkisi de tek token harcamayan yapılandırma durumu (bkz.
+    store/models.py::LlmCall). Bunları "son sonuç" sayan bir okuma, agent
+    kapalıyken çalışan bir anahtarı bozuk, bozuk bir anahtarı da belirsiz
+    gösterirdi.
+    """
+    from store.db import SessionLocal
+    from store.queries import llm_last_outcome
+
+    with SessionLocal() as s:
+        s.add_all([
+            _llm_call("gemini-3.5-flash-lite", "ok", minutes_ago=90),
+            _llm_call("gemini-3.5-flash-lite", "disabled", minutes_ago=10),
+            _llm_call("gemini-3.5-flash-lite", "budget_exceeded", minutes_ago=5),
+        ])
+        s.commit()
+
+    sonuc = llm_last_outcome("gemini-3.5-flash-lite")
+    assert sonuc["status"] == "ok", "yapılandırma durumları son GERÇEK çağrıyı gizlememeli"
+
+
+def test_a_model_never_called_is_not_reported_as_working(db):
+    """"Henüz denenmedi" ile "çalışıyor" aynı şey değil.
+
+    Yeni kurulumda geçmiş yok; bunu "çalışıyor" saymak kullanıcıya
+    doğrulanmamış bir güven verirdi. Panel bu durumda kullanıcıyı
+    "Zinciri sına" düğmesine yönlendiriyor.
+    """
+    from store.queries import llm_last_outcome
+
+    assert llm_last_outcome("hic-cagrilmamis-model") is None

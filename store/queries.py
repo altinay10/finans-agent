@@ -931,6 +931,39 @@ def llm_cost_totals(days: int = 30) -> dict:
         return dict(row)
 
 
+def llm_last_outcome(model: str) -> dict | None:
+    """Bu modelle yapılan SON GERÇEK çağrı ne oldu? (yoksa None)
+
+    NEDEN GEREKLİ: Agent sekmesi "`.env`'deki anahtar kullanılıyor" diye
+    yeşil bir kutu gösteriyordu ve bunu HİÇ DOĞRULAMIYORDU. Anahtar
+    kullanılabilir olmasa bile kutu yeşildi; canlıda `qwen-flash` her
+    koşuda 403 "ModelAccessDenied" alırken panel 18 saat boyunca her şey
+    yolundaymış gibi göründü (inceleme, 2026-09-08). Sessiz arızanın
+    görünmemesinin sebebi buydu.
+
+    'disabled' ve 'budget_exceeded' ELENİYOR: bunlar tek token harcamayan
+    yapılandırma durumları, anahtar hakkında hiçbir şey söylemezler.
+    Anahtarın çalışıp çalışmadığını yalnızca gerçekten yapılmış bir çağrı
+    kanıtlar.
+    """
+    with SessionLocal() as session:
+        row = session.execute(
+            select(LlmCall)
+            .where(LlmCall.model == model, LlmCall.status.in_(("ok", "failed")))
+            .order_by(LlmCall.id.desc())
+            .limit(1)
+        ).scalars().first()
+        if row is None:
+            return None
+        return {
+            "model": row.model,
+            "status": row.status,
+            "error": row.error,
+            "collector": row.collector,
+            "created_at": row.created_at,
+        }
+
+
 def llm_triggers(limit: int = 50) -> list[dict]:
     """"Agent ne zaman hangi durumda devreye girdi?"
 
