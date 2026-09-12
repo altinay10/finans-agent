@@ -7,6 +7,7 @@ takılan istemci, `.env`'i ezmeyen `load_dotenv`, ve ekrana düşen anahtar.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -387,3 +388,125 @@ def test_a_model_never_called_is_not_reported_as_working(db):
     from store.queries import llm_last_outcome
 
     assert llm_last_outcome("hic-cagrilmamis-model") is None
+
+
+# ------------------------------------------------- giriş formu davranışı ----
+
+class _SahteDurum(dict):
+    """`st.session_state` yerine geçen asgari sözlük."""
+
+    def setdefault(self, k, v):  # dict.setdefault zaten var; açıklık için
+        return super().setdefault(k, v)
+
+
+@pytest.fixture
+def form_durumu(monkeypatch, db):
+    """Panelin oturum durumunu sahteyle değiştirir — Streamlit çalıştırmadan."""
+    from app.panels import agent
+
+    durum = _SahteDurum()
+    monkeypatch.setattr(agent.st, "session_state", durum)
+    return durum
+
+
+def test_the_form_is_not_wiped_when_saving_fails(form_durumu):
+    """Başarısız kayıttan sonra yazılanlar YERİNDE KALMALI.
+
+    Form her gönderimde temizleniyordu; anahtar reddedildiğinde kullanıcı
+    taban URL'yi, modeli ve ek gövdeyi baştan yazmak zorunda kalıyordu,
+    oysa düzeltilecek tek şey genelde bir karakterdi (kullanıcı bildirimi,
+    2026-09-12). Temizleme YALNIZCA başarıda çalışır.
+    """
+    from app.panels import agent
+
+    form_durumu.update({
+        agent.FORM_KEY: "yanlis-anahtar",
+        agent.FORM_BASE_URL: "https://api.deepseek.com/v1",
+        agent.FORM_MODEL: "deepseek-chat",
+        agent.FORM_EXTRA: '{"a": 1}',
+    })
+    # Başarısızlık yolunda `_formu_temizle` ÇAĞRILMIYOR; çağrılsaydı bile
+    # yalnızca anahtarı siler, sağlayıcı kutularına dokunmaz.
+    agent._formu_temizle()
+
+    assert form_durumu[agent.FORM_BASE_URL] == "https://api.deepseek.com/v1"
+    assert form_durumu[agent.FORM_MODEL] == "deepseek-chat"
+    assert form_durumu[agent.FORM_EXTRA] == '{"a": 1}'
+    # Anahtar temizleniyor: kaydedilmiş bir anahtarın kutuda kalması gereksiz.
+    assert form_durumu[agent.FORM_KEY] == ""
+
+
+def test_choosing_a_provider_replaces_a_leftover_extra_body(form_durumu):
+    """GEMINI SEÇİLİNCE QWEN'İN ALANI GİTMELİ — bildirilen hatanın tam kendisi.
+
+    Kutu o an geçerli ayardan doldurulduğu için `.env`'deki Qwen alanı
+    Gemini denemesine sızıyor ve istek reddediliyordu.
+    """
+    from app.panels import agent
+
+    form_durumu[agent.FORM_EXTRA] = '{"enable_thinking": false}'
+    form_durumu[agent.PROVIDER_KEY] = "Google Gemini"
+
+    agent._saglayici_degisti()
+
+    assert form_durumu[agent.FORM_EXTRA] == ""
+    assert form_durumu[agent.FORM_BASE_URL].startswith("https://generativelanguage")
+    assert form_durumu[agent.FORM_MODEL]
+
+
+def test_choosing_qwen_fills_the_field_it_actually_needs(form_durumu):
+    from app.panels import agent
+
+    form_durumu[agent.PROVIDER_KEY] = "Qwen (Alibaba DashScope)"
+    agent._saglayici_degisti()
+    assert json.loads(form_durumu[agent.FORM_EXTRA]) == {"enable_thinking": False}
+
+
+def test_custom_provider_keeps_what_the_user_typed(form_durumu):
+    """'Diğer / elle' seçmek kullanıcının yazdıklarını silmemeli."""
+    from app.panels import agent
+    from llm import providers
+
+    form_durumu.update({
+        agent.FORM_BASE_URL: "http://localhost:11434/v1",
+        agent.FORM_MODEL: "qwen3:8b",
+        agent.FORM_EXTRA: '{"x": 1}',
+        agent.PROVIDER_KEY: providers.CUSTOM,
+    })
+    agent._saglayici_degisti()
+
+    assert form_durumu[agent.FORM_BASE_URL] == "http://localhost:11434/v1"
+    assert form_durumu[agent.FORM_MODEL] == "qwen3:8b"
+    assert form_durumu[agent.FORM_EXTRA] == '{"x": 1}'
+
+
+def test_price_boxes_start_at_one_and_five(form_durumu):
+    """Fiyat kutuları boş değil, makul bir varsayılanla açılmalı.
+
+    Ayrı bir "Birim fiyat" bölümü vardı, kullanıcı onu açmayınca maliyet
+    "bilinmiyor" kalıyordu (kullanıcı isteği, 2026-09-12).
+    """
+    from app.panels import agent
+
+    agent._form_alanlarini_hazirla()
+    assert form_durumu[agent.FORM_PRICE_IN] == 1.0
+    assert form_durumu[agent.FORM_PRICE_OUT] == 5.0
+
+
+def test_a_saved_price_is_not_clobbered_by_the_default(form_durumu):
+    """Bilinçli girilmiş fiyat, varsayılanla sessizce geri alınmamalı."""
+    from app.panels import agent
+    from store import app_settings
+
+    app_settings.set_price_rates(0.15, 0.60)
+    agent._form_alanlarini_hazirla()
+
+    assert form_durumu[agent.FORM_PRICE_IN] == 0.15
+    assert form_durumu[agent.FORM_PRICE_OUT] == 0.60
+
+
+def test_the_pricing_section_is_gone():
+    """Ayrı "Birim fiyat" bölümü kaldırıldı; fiyat artık giriş formunda."""
+    from app.panels import agent
+
+    assert not hasattr(agent, "_render_pricing")

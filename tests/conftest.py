@@ -26,6 +26,13 @@ import pytest
 _TMP_DB = Path(tempfile.gettempdir()) / f"finans_agent_test_{os.getpid()}.db"
 os.environ["DB_URL"] = f"sqlite:///{_TMP_DB}"
 
+# ANAHTAR AYNASI DA GEÇİCİ OLMALI. `llm/credentials_file.py` yolu import
+# anında okuyor; ayarlanmazsa testler deponun gerçek
+# `data/llm_credentials.json` dosyasını ezer ve kullanıcının kayıtlı
+# anahtarlarını silerdi.
+_TMP_KEYS = Path(tempfile.gettempdir()) / f"finans_agent_keys_{os.getpid()}.json"
+os.environ["LLM_CREDENTIALS_FILE"] = str(_TMP_KEYS)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _gecici_veritabanini_temizle():
@@ -36,7 +43,7 @@ def _gecici_veritabanini_temizle():
     veritabanı incelenebilir olmalı.
     """
     yield
-    for artik in (_TMP_DB, Path(f"{_TMP_DB}-wal"), Path(f"{_TMP_DB}-shm")):
+    for artik in (_TMP_DB, Path(f"{_TMP_DB}-wal"), Path(f"{_TMP_DB}-shm"), _TMP_KEYS):
         try:
             artik.unlink(missing_ok=True)
         except OSError:
