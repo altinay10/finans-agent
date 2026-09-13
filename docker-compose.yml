@@ -52,16 +52,37 @@ x-env: &env
   RETAIN_HTTP_REQUEST_DAYS: ${RETAIN_HTTP_REQUEST_DAYS:-30}
   RETAIN_SOURCE_RUN_DAYS: ${RETAIN_SOURCE_RUN_DAYS:-180}
   RETAIN_SCRAPE_RUN_DAYS: ${RETAIN_SCRAPE_RUN_DAYS:-180}
-  RETAIN_SNAPSHOT_DAYS: ${RETAIN_SNAPSHOT_DAYS:-14}
+  RETAIN_SNAPSHOT_DAYS: ${RETAIN_SNAPSHOT_DAYS:-3}
   EVDS_API_KEY: ${EVDS_API_KEY:-}
   # Boş bırakılırsa store/db.py volume içindeki SQLite dosyasını kullanır.
   # .env'de tanımlıysa (ör. Postgres'e geçiş) konteynere de geçmeli, yoksa
   # panel ve zamanlayıcı AYRI veritabanlarına bakar.
   DB_URL: ${DB_URL:-}
 
+# KONTEYNER LOG SINIRI. Docker'ın varsayılan `json-file` sürücüsü diske
+# SINIRSIZ yazar: konteyner ne kadar yaşarsa dosya o kadar büyür ve hiçbir
+# şey onu budamaz. `docker logs` bu dosyayı okuyor.
+#
+# Bu soyut bir risk değil — aynı Raspberry Pi'de başka bir projenin
+# konteyneri 30 MB'a ulaşmış durumda (ölçüm: 2026-09-13). Kurulup unutulan
+# bir sistemde bu sessizce büyümeye devam eder.
+#
+# Uygulamanın KENDİ dosya log'u zaten sınırlı (5 x 2 MB, bkz.
+# store/logging_setup.py); sınırsız olan yalnızca Docker'ın kopyasıydı.
+#
+# 10 MB x 3 dosya = konteyner başına en fazla 30 MB. `docker logs` için
+# fazlasıyla yeterli bir geçmiş; teşhis için asıl kaynak zaten
+# `data/logs/` ve veritabanındaki koşu kayıtları.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   panel:
     build: .
+    logging: *logging
     image: finans-agent:latest
     container_name: finans-panel
     # Ayrı bir scheduler servisi olduğu için panel yalnızca paneldir.
@@ -81,6 +102,7 @@ services:
   # Sürekli çalışıp toplayıcıları zamanında tetikler (cron'a gerek yok).
   scheduler:
     build: .
+    logging: *logging
     image: finans-agent:latest
     container_name: finans-scheduler
     volumes:
@@ -123,6 +145,7 @@ services:
   # Elle çalıştırma: docker compose run --rm worker all
   worker:
     build: .
+    logging: *logging
     image: finans-agent:latest
     volumes:
       - finans-data:/app/data
