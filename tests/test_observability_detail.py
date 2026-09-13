@@ -408,6 +408,78 @@ def test_schema_drift_still_catches_a_collapse_after_seeding(db):
     assert alerts[0]["drop_pct"] == 75.0
 
 
+def test_a_source_with_only_a_couple_of_rows_is_not_watched(db):
+    """KÜÇÜK KAYNAKTA TEK SATIR OYNAMASI ALARM DEĞİL.
+
+    Canlı şikâyet (2026-09-13): panel `loan_rates_llm/garantibbva_ihtiyac`
+    için "2 satırdan 1'e düştü, %50" diye alarm veriyordu. Agent kaynakları
+    bir pazarlama sayfasından 1-5 arası oran çıkarıyor; bu ölçekte tek bir
+    satırın oynaması %20-50 demek, yani %40'lık eşiği DOĞAL değişim bile
+    aşıyor.
+    """
+    from store.queries import schema_drift
+
+    with SessionLocal() as s:
+        for satir in (2, 2, 2):
+            r = _source_run("loan_rates_llm", "garantibbva_ihtiyac", "ok", 100, phase="parse")
+            r.rows = satir
+            s.add(r)
+        son = _source_run("loan_rates_llm", "garantibbva_ihtiyac", "ok", 5, phase="parse")
+        son.rows = 1
+        s.add(son)
+        s.commit()
+
+    assert schema_drift() == []
+
+
+def test_a_big_source_losing_the_same_ratio_still_alarms(db):
+    """Eşik, GERÇEK kısmi kaybı gizlememeli — aynı oran, büyük tabanda alarm.
+
+    İki test birlikte, eşiğin "yüzdeyi görmezden gel" değil "teşhis
+    edilemeyecek kadar küçük tabanı atla" demek olduğunu kilitliyor.
+    """
+    from store.queries import schema_drift
+
+    with SessionLocal() as s:
+        for satir in (40, 40, 40):
+            r = _source_run("deposit_rates", "teb", "ok", 100, phase="parse")
+            r.rows = satir
+            s.add(r)
+        son = _source_run("deposit_rates", "teb", "ok", 5, phase="parse")
+        son.rows = 20                      # aynı %50 düşüş
+        s.add(son)
+        s.commit()
+
+    alerts = schema_drift()
+    assert len(alerts) == 1
+    assert alerts[0]["source"] == "teb"
+
+
+def test_total_loss_in_a_small_source_is_caught_elsewhere(db):
+    """Küçük kaynağın TAMAMEN kaybı bu dedektörün işi değil, ve olmamalı.
+
+    Sıfır satır `status='ok'` değil `'empty'` yazıyor; `schema_drift`
+    yalnızca 'ok' koşulara bakıyor, `source_health` ise 'empty'yi hata
+    sayıyor. Yani taban eşiği hiçbir gerçek arızayı gizlemiyor.
+    """
+    from store.queries import schema_drift, source_health
+
+    with SessionLocal() as s:
+        for satir in (2, 2, 2):
+            r = _source_run("loan_rates_llm", "halkbank", "ok", 100, phase="parse")
+            r.rows = satir
+            s.add(r)
+        bos = _source_run("loan_rates_llm", "halkbank", "empty", 5, phase="parse")
+        bos.rows = 0
+        bos.error = "agent 0 kayıt döndürdü"
+        s.add(bos)
+        s.commit()
+
+    assert schema_drift() == [], "sapma dedektörünün işi değil"
+    kayit = next(h for h in source_health(48) if h["source"] == "halkbank")
+    assert kayit["bad_count"] == 1, "kaynak sağlığında görünmeli"
+
+
 # --------------------------------------------------- oran değişim / donma ----
 
 def test_first_run_records_every_series_as_new(db):

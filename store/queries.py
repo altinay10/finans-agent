@@ -722,6 +722,22 @@ def source_recovery(days: int = 30) -> list[dict]:
 #: Sapma araması için gereken EN AZ önceki koşu sayısı (bkz. `schema_drift`).
 DRIFT_MIN_GECMIS = 3
 
+#: Sapma aranması için tabanın EN AZ bu kadar satır olması gerekiyor.
+#
+# NEDEN (canlı, 2026-09-13): agent kaynakları bir sayfadan 1-5 arası oran
+# çıkarıyor. Bu ölçekte TEK BİR satırın oynaması %20-50 "düşüş" demek, yani
+# %40'lık eşiği doğal değişim bile aşıyor. Panel `garantibbva_ihtiyac` için
+# "2 satırdan 1'e düştü, %50" diye alarm veriyordu; oysa bir pazarlama
+# sayfasının bir dönem iki, bir dönem tek oran ilan etmesi olağan.
+#
+# Dedektörün amacı SESSİZ KISMİ KAYIP: normalde onlarca satır veren bir
+# ayrıştırıcının bir kısmını kaybetmesi. Tabanı 1-2 olan bir kaynakta
+# teşhis edilecek "kısmi" bir şey yok — ya çalışıyor ya çalışmıyor. Tam
+# kayıp zaten AYRI ve daha gürültülü bir sinyal: sıfır satır `status='ok'`
+# değil `'empty'` yazıyor ve kaynak sağlığında kırmızı görünüyor, yani bu
+# eşik hiçbir gerçek arızayı gizlemiyor.
+DRIFT_MIN_TABAN = 5
+
 
 def schema_drift(lookback_runs: int = 5) -> list[dict]:
     """"Sayfa kısmen değişti mi?" — satır sayısındaki ani düşüş uyarısı.
@@ -784,7 +800,7 @@ def schema_drift(lookback_runs: int = 5) -> list[dict]:
             continue
         onceki = sorted(r["rows"] for r in previous)
         baseline = onceki[len(onceki) // 2]
-        if baseline <= 0:
+        if baseline < DRIFT_MIN_TABAN:
             continue
         drop = (baseline - latest["rows"]) / baseline
         if drop >= 0.40:
