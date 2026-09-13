@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from config.loader import funds_yaml_path
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from store.migrate import add_missing_columns
@@ -49,6 +49,60 @@ def _db_url() -> str:
 
 
 engine = create_engine(_db_url(), future=True)
+
+
+#: Yazma kilidi beklerken vazgeçmeden önce beklenecek süre (ms).
+#: SQLite'ın varsayılanı 0 — yani kilit görünce ANINDA hata verir.
+BUSY_TIMEOUT_MS = 10_000
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_pragmalari(dbapi_conn, _kayit) -> None:
+    """Her yeni SQLite bağlantısında WAL ve bekleme süresi.
+
+    SORUN: bu proje aynı SQLite dosyasına İKİ AYRI SÜREÇTEN yazıyor (panel
+    ve zamanlayıcı, ayrı konteynerler, ortak volume). Varsayılan
+    `journal_mode=delete` kipinde bir yazma, dosyanın TAMAMINI kilitliyor;
+    o sırada okumaya çalışan diğer süreç `database is locked` alıyor.
+    Canlıda bu, zamanlayıcının nabız yazımını düşürüyordu
+    (`store.heartbeat: nabız yazılamadı`, 2026-09-13 ve öncesi).
+
+    WAL (Write-Ahead Logging) NE YAPIYOR: yazmalar ana dosyaya değil, yanına
+    konulan bir `-wal` dosyasına ekleniyor. Okuyucular bu sırada ana dosyanın
+    tutarlı son hâlini okumaya devam ediyor. Yani TEK YAZAR + ÇOK OKUYUCU
+    aynı anda çalışabiliyor ve birbirini bloke etmiyor. İki yazar hâlâ
+    sıraya giriyor — WAL bunu kaldırmıyor, ama bizim çakışmamız
+    yazar/okuyucu çakışmasıydı.
+
+    NEDEN `synchronous` DEĞİŞTİRİLMİYOR: WAL ile birlikte `NORMAL` yaygın
+    bir öneri ve daha hızlı, ama elektrik kesintisinde son işlemleri
+    kaybettirebiliyor. Burası bir Raspberry Pi ve elektrik kesintisi gerçek
+    bir olasılık; hız sorunumuz da yok. Dayanıklılığı istenmediği halde
+    düşürmek doğru olmaz, varsayılan (FULL) kalıyor.
+
+    BUSY_TIMEOUT AYRICA GEREKLİ: WAL iki YAZARIN çakışmasını çözmüyor.
+    Varsayılan 0 ms ile ikinci yazar anında hata alır; 10 saniye beklemek,
+    bu iş yükünde (saniyeler süren toplama turları değil, milisaniyelik
+    yazmalar) çakışmayı fiilen görünmez kılıyor.
+
+    KİP DOSYAYA KALICI, TIMEOUT BAĞLANTIYA ÖZEL — bu yüzden ikisi de her
+    bağlantıda kuruluyor. `journal_mode` ikinci kez ayarlandığında SQLite
+    hiçbir şey yapmıyor, yani tekrar maliyetsiz.
+    """
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    cur = dbapi_conn.cursor()
+    try:
+        cur.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        # :memory: ve geçici veritabanları WAL'ı desteklemiyor; PRAGMA
+        # sessizce eski kipi döndürür, hata vermez. Yine de sonucu
+        # kontrol etmiyoruz: WAL'a geçememek çalışmayı engellemez, yalnızca
+        # eski (çakışmaya açık) davranışa döner.
+        cur.execute("PRAGMA journal_mode=WAL")
+    finally:
+        cur.close()
+
+
 SessionLocal: sessionmaker[Session] = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
