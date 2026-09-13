@@ -50,7 +50,7 @@ def _days(name: str, default: int) -> int:
 HTTP_REQUEST_DAYS = _days("RETAIN_HTTP_REQUEST_DAYS", 30)
 SOURCE_RUN_DAYS = _days("RETAIN_SOURCE_RUN_DAYS", 180)
 SCRAPE_RUN_DAYS = _days("RETAIN_SCRAPE_RUN_DAYS", 180)
-SNAPSHOT_DAYS = _days("RETAIN_SNAPSHOT_DAYS", 14)
+SNAPSHOT_DAYS = _days("RETAIN_SNAPSHOT_DAYS", 3)
 
 
 def purge(now=None) -> dict[str, int]:
@@ -87,9 +87,21 @@ def purge(now=None) -> dict[str, int]:
 def purge_snapshots(now=None) -> int:
     """Ham yanıt dosyalarını budar.
 
-    Snapshot'lar onarım için tutuluyor (bir parser kırıldığında elle
-    bakılacak ham veri). İki haftadan eski bir snapshot'ın onarım değeri
-    kalmaz ama diskte yer kaplamaya devam eder.
+    NE TUTULUYOR: her başarılı `fetch`ten sonra, AYRIŞTIRMADAN ÖNCE,
+    sunucunun döndürdüğü ham gövde (bkz. collectors/base._write_snapshot).
+    Banka sayfalarının HTML'i, TCMB'nin XML'i, API'lerin JSON'u. Tek
+    amacı: bir ayrıştırıcı kırıldığında "o an sayfa ne diyordu" sorusuna
+    bakabilmek. HİÇBİR KOD BUNLARI OKUMUYOR — yalnızca insan için.
+
+    NEDEN 3 GÜN (kullanıcı kararı, 2026-09-13): saklama süresinin değeri,
+    bir bozulmayı fark etmek için geçen süreye eşit. Panel bozulmayı artık
+    hızlı gösteriyor (Kayıtlar sekmesi, şema sapması, kaynak sağlığı), yani
+    iki haftalık pencere pratikte hiç kullanılmıyordu. Üç gün, agent'ın
+    Pazartesi koşusunun Perşembe koşusuna kadar elde kalmasına da yetiyor.
+
+    BOYUT: ham banka sayfaları oran tablolarından kat kat büyük. Tek bir
+    `loan_rates_llm` snapshot'ı 12 bankanın HTML'ini birden taşıdığı için
+    ~2,5 MB. 14 günlük pencerede bu birikiyordu; 3 günde birikmiyor.
     """
     if SNAPSHOT_DAYS <= 0 or not SNAPSHOT_DIR.exists():
         return 0
